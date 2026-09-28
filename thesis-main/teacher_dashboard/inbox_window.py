@@ -1,7 +1,7 @@
 import customtkinter as ctk
 import json
 import socket
-from network_config import ADMIN_IP, LOG_PORT
+from network_config import LOG_PORT, get_admin_ip
 from ui_utils import center_window
 from config import COLORS
 from .date_filters import matches_date_range, parse_date_range
@@ -13,7 +13,10 @@ def _fetch_alerts(master_dashboard):
     if teacher_id:
         request += f" | TEACHERID: {teacher_id}"
     try:
-        with socket.create_connection((ADMIN_IP, LOG_PORT), timeout=5) as client:
+        admin_ip = get_admin_ip()
+        if not admin_ip:
+            return []
+        with socket.create_connection((admin_ip, LOG_PORT), timeout=5) as client:
             client.sendall(request.encode())
             response = client.recv(65536).decode()
         return json.loads(response) if response else []
@@ -24,7 +27,10 @@ def _fetch_alerts(master_dashboard):
 
 def _acknowledge_alert(alert_id):
     try:
-        with socket.create_connection((ADMIN_IP, LOG_PORT), timeout=5) as client:
+        admin_ip = get_admin_ip()
+        if not admin_ip:
+            return False
+        with socket.create_connection((admin_ip, LOG_PORT), timeout=5) as client:
             client.sendall(f"ACTION: ACK_ALERT | ALERTID: {alert_id}".encode())
             return client.recv(64).decode() == "SUCCESS"
     except OSError as error:

@@ -6,8 +6,7 @@ import time
 import pyautogui
 import os
 import json
-
-from network_config import ADMIN_IP
+from network_config import get_admin_ip
 
 pyautogui.FAILSAFE = False
 
@@ -61,18 +60,24 @@ def start_control_listener():
         except Exception:
             pass
 
-def start_live_monitoring(admin_ip):
+def start_live_monitoring(target_ip, follow_admin=False):
     """Port 9997 para sa Remote View / Remote Control (Naka-optimize sa 15 FPS)"""
     while True:
         username = get_current_username()
         if not username:
             time.sleep(2)
             continue
+        discovered_admin = get_admin_ip(timeout=1.0)
+        if not discovered_admin:
+            time.sleep(2)
+            continue
+        if follow_admin:
+            target_ip = discovered_admin
             
         try:
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            client.connect((admin_ip, 9997))
+            client.connect((target_ip, 9997))
             
             with mss.mss() as sct:
                 monitor = sct.monitors[1]
@@ -98,20 +103,26 @@ def start_live_monitoring(admin_ip):
         except Exception:
             time.sleep(2)
 
-def stream_to_target(target_ip, target_port):
+def stream_to_target(target_ip, target_port, follow_admin=False):
     """Optimized stream para sa guro (Binabaan ang quality at nilagyan ng FPS limit)"""
     while True:
         username = get_current_username()
         if not username:
             time.sleep(2)
             continue
+        discovered_admin = get_admin_ip(timeout=1.0)
+        if not discovered_admin:
+            time.sleep(2)
+            continue
+        if follow_admin:
+            target_ip = discovered_admin
             
         try:
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             client.connect((target_ip, target_port))
             
-            name_msg = f"NAME: {username}\n"
+            name_msg = f"NAME: {username}|ROLE:student\n"
             client.sendall(name_msg.encode('utf-8'))
             
             with mss.mss() as sct:
@@ -137,5 +148,5 @@ def stream_to_target(target_ip, target_port):
 def start_stream(teacher_ip):
     stream_to_target(teacher_ip, 9998)
 
-def start_admin_stream():
-    stream_to_target(ADMIN_IP, 9998)
+def start_admin_stream(admin_ip):
+    stream_to_target(admin_ip, 9998, follow_admin=True)

@@ -8,14 +8,12 @@ import mss
 import numpy as np
 import cv2
 import pyautogui
-from concurrent.futures import ThreadPoolExecutor
-from PIL import Image
 from .network_utils import send_command
 from .screen_receiver import ScreenViewer
 from network_config import BROADCAST_PORT
 from ui_utils import center_window
 from .history_window import open_history_window
-from .student_cards import setup_grid_layout, create_student_card
+from .student_cards import setup_grid_layout
 
 from .account_approvals import open_account_approvals
 from .inbox_window import open_inbox_window  
@@ -95,20 +93,10 @@ class TeacherDashboard(ctk.CTkToplevel):
         start_alert_monitoring(self.master_app, self)
 
     def logout_teacher(self):
-        try:
-            if self.master_app:
-                self.master_app.deiconify()
-                self.master_app.update_idletasks()
-                try:
-                    self.master_app.state("zoomed")
-                except Exception:
-                    try:
-                        self.master_app.attributes("-zoomed", True)
-                    except Exception:
-                        maximize_window(self.master_app)
-        except Exception as e:
-            print(f"[DEBUG] Error sa pag-logout: {e}")
-        self.destroy()
+        if self.master_app:
+            self.master_app.on_dashboard_close(self)
+        else:
+            self.destroy()
 
     def toggle_share_screen(self):
         targets = list(self.student_cards.keys())

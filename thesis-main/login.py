@@ -1,6 +1,5 @@
 import customtkinter as ctk
 import json
-import os
 import socket
 import threading
 import datetime
@@ -20,7 +19,7 @@ db.init_db()
 db.seed_defaults()
 from teacher_dashboard.teacher_screen_sender import start_teacher_streaming, stop_teacher_streaming
 from ui_utils import center_window
-from network_config import ADMIN_IP
+from network_config import discover_admin_ip
 
 class LabSelectionDialog(ctk.CTkToplevel):
     def __init__(self, master, on_selected):
@@ -73,6 +72,8 @@ class LoginApp(ctk.CTk):
         self.active_teacher_dashboard = None  # <--- Reference para sa student expressions
         self.login_history_data = []
         self.online_teachers = {}  # lab_id -> {"teacher_id": ...}  (populated on Admin's machine via network)
+        self.teacher_ips_by_lab = {}
+        self.is_admin_node = False
 
     
         start_persistent_stream_listeners(self)
@@ -80,6 +81,7 @@ class LoginApp(ctk.CTk):
         # Simulan ang background log listener at broadcast server
         threading.Thread(target=self.start_log_listener, daemon=True).start()
         threading.Thread(target=self.broadcast_stream_server, daemon=True).start()
+        threading.Thread(target=self.start_lan_discovery_listener, daemon=True).start()
         
         header = ctk.CTkFrame(self, fg_color=COLORS["navy_panel"], corner_radius=0, height=82)
         header.pack(fill="x")
@@ -145,7 +147,7 @@ class LoginApp(ctk.CTk):
                 elif "ACTION: LOGOUT" in data:
                     self.handle_student_logout_event(data)
                 elif "ACTION: TEACHER_ONLINE" in data:
-                    self.handle_teacher_online(data)
+                    self.handle_teacher_online(data, addr[0])
                     conn.close()
                 elif "ACTION: TEACHER_OFFLINE" in data:
                     self.handle_teacher_offline(data)
@@ -203,7 +205,31 @@ class LoginApp(ctk.CTk):
             except: 
                 break
 
-    def handle_teacher_online(self, data):
+    def start_lan_discovery_listener(self):
+        discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            discovery_socket.bind(("0.0.0.0", 37020))
+            discovery_socket.settimeout(1.0)
+        except OSError as error:
+            print(f"[LAN discovery] Cannot listen on UDP 37020: {error}")
+            return
+
+        while True:
+            try:
+                request, address = discovery_socket.recvfrom(256)
+                parts = request.decode("ascii", errors="ignore").split("|")
+                if len(parts) == 3 and parts[0:2] == ["COMPHUB_DISCOVER", "ADMIN"] and self.is_admin_node:
+                    discovery_socket.sendto(
+                        f"COMPHUB_SERVICE|ADMIN|{parts[2]}".encode("ascii"), address
+                    )
+            except socket.timeout:
+                continue
+            except OSError as error:
+                print(f"[LAN discovery] Listener stopped: {error}")
+                break
+
+    def handle_teacher_online(self, data, teacher_ip=""):
         try:
             teacher_id_str = lab_id_str = pc_name = ""
             for part in data.split("|"):
@@ -220,8 +246,20 @@ class LoginApp(ctk.CTk):
 
                 # Admin's own database is the single source of truth: create the
                 # real session row HERE, not on the teacher's own machine.
-                session_id = db.start_session(teacher_id, lab_id=lab_id, pc_name=pc_name, ip_address="teacher")
-                self.online_teachers[lab_id] = {"teacher_id": teacher_id, "session_id": session_id}
+                for old_lab_id, entry in list(self.online_teachers.items()):
+                    if entry.get("teacher_id") == teacher_id:
+                        if entry.get("session_id"):
+                            db.end_session(entry["session_id"])
+                        self.online_teachers.pop(old_lab_id, None)
+                        self.teacher_ips_by_lab.pop(old_lab_id, None)
+                session_id = db.start_session(teacher_id, lab_id=lab_id, pc_name=pc_name, ip_address=teacher_ip)
+                entry = {
+                    "teacher_id": teacher_id,
+                    "session_id": session_id,
+                    "ip_address": teacher_ip,
+                }
+                self.online_teachers[lab_id] = entry
+                self.teacher_ips_by_lab[lab_id] = teacher_ip
                 print(f"[DEBUG] Teacher {teacher_id} is now ONLINE in lab {lab_id} (session {session_id})")
         except Exception as e:
             print(f"[ERROR handle_teacher_online]: {e}")
@@ -236,15 +274,19 @@ class LoginApp(ctk.CTk):
                 entry = self.online_teachers.pop(int(lab_id_str), None)
                 if entry and entry.get("session_id"):
                     db.end_session(entry["session_id"])
+                self.teacher_ips_by_lab.pop(int(lab_id_str), None)
                 print(f"[DEBUG] Teacher OFFLINE for lab {lab_id_str}")
         except Exception as e:
             print(f"[ERROR handle_teacher_offline]: {e}")
 
     def _notify_admin_teacher_online(self, teacher_id, lab_id):
         try:
+            admin_ip = discover_admin_ip(timeout=3)
+            if not admin_ip:
+                raise OSError("Admin server was not discovered on this LAN.")
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(3)
-            s.connect((ADMIN_IP, 5001))
+            s.connect((admin_ip, 5001))
             pc_name = socket.gethostname()
             s.sendall(f"ACTION: TEACHER_ONLINE | TEACHERID: {teacher_id} | LABID: {lab_id} | PCNAME: {pc_name}".encode())
             s.close()
@@ -253,9 +295,12 @@ class LoginApp(ctk.CTk):
 
     def _notify_admin_teacher_offline(self, lab_id):
         try:
+            admin_ip = discover_admin_ip(timeout=3)
+            if not admin_ip:
+                raise OSError("Admin server was not discovered on this LAN.")
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(3)
-            s.connect((ADMIN_IP, 5001))
+            s.connect((admin_ip, 5001))
             s.sendall(f"ACTION: TEACHER_OFFLINE | LABID: {lab_id}".encode())
             s.close()
         except Exception as e:
@@ -455,6 +500,10 @@ class LoginApp(ctk.CTk):
                 # A prior crash may have left a live flag behind; it must not
                 # color a newly logged-in student's card red.
                 db.close_active_site_alert(user["id"])
+                existing_session = db.get_active_session_id(user["id"])
+                if existing_session:
+                    self.active_sessions[username] = existing_session
+                    return
                 session_id = db.start_session(
                     user["id"], lab_id=user.get("lab_id"),
                     pc_name=addr[0], ip_address=addr[0]
@@ -618,8 +667,21 @@ class LoginApp(ctk.CTk):
     def handle_get_teachers(self, conn):
         try:
             teachers = db.get_all_teachers()
+            online_by_teacher = {
+                entry["teacher_id"]: {
+                    "ip_address": entry.get("ip_address"),
+                    "lab_id": lab_id,
+                }
+                for lab_id, entry in self.online_teachers.items()
+            }
             payload = [
-                {"id": t["id"], "username": t["username"], "full_name": t["full_name"] or t["username"]}
+                {
+                    "id": t["id"],
+                    "username": t["username"],
+                    "full_name": t["full_name"] or t["username"],
+                    "ip_address": online_by_teacher.get(t["id"], {}).get("ip_address"),
+                    "lab_id": online_by_teacher.get(t["id"], {}).get("lab_id"),
+                }
                 for t in teachers
             ]
             conn.send(json.dumps(payload).encode())
@@ -766,9 +828,14 @@ class LoginApp(ctk.CTk):
         password = self.pass_entry.get()
 
         try:
+            admin_ip = discover_admin_ip(timeout=1.5)
+            if not admin_ip and username.strip().lower() == "admin":
+                admin_ip = "127.0.0.1"
+            if not admin_ip:
+                raise OSError("Hindi makita ang Admin server sa local network. Siguraduhing naka-login at nasa parehong Wi-Fi.")
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(5)
-            s.connect((ADMIN_IP, 5001))
+            s.connect((admin_ip, 5001))
             s.sendall(f"ACTION: STAFF_LOGIN_CHECK | USER: {username} | PWD: {password}".encode())
             response = s.recv(4096).decode()
             s.close()
@@ -779,6 +846,7 @@ class LoginApp(ctk.CTk):
 
         if result.get("success"):
             user = {"id": result["id"], "role": result["role"], "full_name": result["full_name"], "username": username}
+            self.is_admin_node = user["role"] == "admin"
             self.withdraw()
             role = user["role"]
 
@@ -811,6 +879,8 @@ class LoginApp(ctk.CTk):
                 self.current_teacher_lab_id = None
                 self.current_teacher_user_id = None
                 stop_teacher_streaming()
+            else:
+                self.is_admin_node = False
         dashboard.destroy()
         self.deiconify()
 

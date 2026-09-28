@@ -1,12 +1,10 @@
 import customtkinter as ctk
 import tkinter.ttk as ttk
-import socket
 from database import db
 from teacher_dashboard.network_utils import send_command
-from network_config import CONFIG as NETWORK_CONFIG, save_ip_registry
 import tkinter as tk
 from tkinter import messagebox
-from teacher_dashboard.network_listeners import hydrate_dashboard, start_alert_monitoring, update_student_card_name
+from teacher_dashboard.network_listeners import hydrate_dashboard, start_alert_monitoring
 from teacher_dashboard.student_cards import create_occupancy_card
 from teacher_dashboard.date_filters import matches_date_range, parse_date_range
 from teacher_dashboard.screen_receiver import ScreenViewer
@@ -49,7 +47,6 @@ class AdminDashboard(ctk.CTkToplevel):
         tabview.add("Lab Monitoring")
         tabview.add("Inventory")
         tabview.add("Blocking Rules")
-        tabview.add("IP Management")
 
         # --- Monitoring Tab ---
         self.student_cards = {}
@@ -231,39 +228,11 @@ class AdminDashboard(ctk.CTkToplevel):
         self.blocking_rules_frame.pack(fill="both", expand=True, padx=12, pady=8)
         self.refresh_blocking_rules()
 
-        # --- IP Management Tab ---
-        ip_tab = tabview.tab("IP Management")
-        ctk.CTkLabel(ip_tab, text="Registered Computers", text_color=COLORS["ink"],
-                 font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w", padx=16, pady=(16, 4))
-        ctk.CTkLabel(ip_tab, text="Assign an IP to Student or Teacher. The saved role is used when that computer streams in.",
-                 text_color=COLORS["muted"], wraplength=700, justify="left").pack(anchor="w", padx=16, pady=(0, 12))
-
-        ip_form = ctk.CTkFrame(ip_tab, fg_color="transparent")
-        ip_form.pack(fill="x", padx=12, pady=6)
-        self.registered_ip_entry = ctk.CTkEntry(ip_form, placeholder_text="IPv4 address", width=230)
-        self.registered_ip_entry.pack(side="left", padx=5)
-        self.registered_ip_role = ctk.CTkSegmentedButton(ip_form, values=["Student", "Teacher"], width=220)
-        self.registered_ip_role.pack(side="left", padx=8)
-        self.registered_ip_role.set("Student")
-        ctk.CTkButton(ip_form, text="Add IP", fg_color=COLORS["blue"],
-                  hover_color=COLORS["blue_hover"], command=self.add_registered_ip).pack(side="left", padx=5)
-        self.ip_registry_status = ctk.CTkLabel(ip_tab, text="", anchor="w")
-        self.ip_registry_status.pack(fill="x", padx=16, pady=4)
-        self.ip_registry_frame = ctk.CTkScrollableFrame(ip_tab)
-        self.ip_registry_frame.pack(fill="both", expand=True, padx=12, pady=8)
-        self.refresh_ip_registry()
-
     def logout_admin(self):
-        """Isara ang Admin Dashboard, ipakita ulit ang main window, at pumunta sa login screen."""
-        self.destroy()
-        
-        # Kung tinago ang main app window noong binuksan ang dashboard, ipakita ito ulit
-        if hasattr(self.master_app, "deiconify"):
-            self.master_app.deiconify()
-            
-        # Tawagin ang login screen function ng main app
-        if hasattr(self.master_app, "show_login_screen"):
-            self.master_app.show_login_screen()
+        if hasattr(self.master_app, "on_dashboard_close"):
+            self.master_app.on_dashboard_close(self)
+        else:
+            self.destroy()
 
     def reset_student_password(self):
         username = self.target_user_entry.get().strip()
@@ -423,46 +392,6 @@ class AdminDashboard(ctk.CTkToplevel):
         db.remove_blocklist_entry(entry_id)
         self.blocking_status.configure(text="Blocking rule removed.", text_color=COLORS["sky"])
         self.refresh_blocking_rules()
-
-    def refresh_ip_registry(self):
-        for widget in self.ip_registry_frame.winfo_children():
-            widget.destroy()
-
-        for role in ("student", "teacher"):
-            for address in NETWORK_CONFIG.get(f"{role}_pc_ip", []):
-                row = ctk.CTkFrame(self.ip_registry_frame)
-                row.pack(fill="x", padx=5, pady=4)
-                role_color = COLORS["pink"] if role == "student" else COLORS["sky"]
-                ctk.CTkLabel(row, text=role.capitalize(), width=100, text_color=role_color,
-                             font=ctk.CTkFont(weight="bold")).pack(side="left", padx=10, pady=8)
-                ctk.CTkLabel(row, text=address, anchor="w").pack(side="left", padx=8, fill="x", expand=True)
-                ctk.CTkButton(row, text="Remove", width=85, fg_color=COLORS["danger"],
-                              hover_color=COLORS["pink_hover"],
-                              command=lambda ip=address, kind=role: self.remove_registered_ip(ip, kind)).pack(side="right", padx=8, pady=5)
-
-    def add_registered_ip(self):
-        address = self.registered_ip_entry.get().strip()
-        role = self.registered_ip_role.get().lower()
-        try:
-            address = save_ip_registry(role, address)
-        except (ValueError, OSError) as error:
-            self.ip_registry_status.configure(text=f"Enter a valid IPv4 address: {error}", text_color=COLORS["danger"])
-            return
-        self.registered_ip_entry.delete(0, "end")
-        self.ip_registry_status.configure(text=f"{address} saved as {role}.", text_color=COLORS["success"])
-        if address in getattr(self.master_app, "connected_students", {}):
-            username = self.master_app.ip_to_username.get(address, f"User-{address}")
-            update_student_card_name(self.master_app, username, address, role)
-        self.refresh_ip_registry()
-
-    def remove_registered_ip(self, address, role):
-        save_ip_registry(role, address, remove=True)
-        self.ip_registry_status.configure(text=f"Removed {address} from {role} registry.", text_color=COLORS["muted"])
-        if address in getattr(self.master_app, "connected_students", {}):
-            username = self.master_app.ip_to_username.get(address, f"User-{address}")
-            handshake_role = self.master_app.handshake_roles.get(address, "student")
-            update_student_card_name(self.master_app, username, address, handshake_role)
-        self.refresh_ip_registry()
 
     def _get_all_connected_ips(self):
         connected = getattr(self.master_app, "connected_students", {})

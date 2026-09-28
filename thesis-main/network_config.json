@@ -1,15 +1,8 @@
 {
-    "teacher_ip": "192.168.100.40",
-    "admin_ip": "192.168.100.251",
     "log_port": 5001,
     "command_port": 5050,
     "control_port": 9999,
     "broadcast_port": 9996,
     "stream_port": 9998,
-    "remote_view_port": 9997,
-    "student_pc_ip": [
-        "192.168.100.71",
-        "192.168.100.117"
-    ],
-    "teacher_pc_ip": []
+    "remote_view_port": 9997
 }

@@ -6,7 +6,7 @@ from PIL import Image, ImageTk
 
 import socket as _socket
 import json as _json
-from network_config import TEACHER_IP, ADMIN_IP, LOG_PORT, get_registered_ip_role
+from network_config import LOG_PORT, get_admin_ip
 
 
 def _get_user_info(username, is_admin_context):
@@ -19,9 +19,12 @@ def _get_user_info(username, is_admin_context):
         return _db.get_user_by_username(username)
 
     try:
+        admin_ip = get_admin_ip()
+        if not admin_ip:
+            return None
         s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
         s.settimeout(3)
-        s.connect((ADMIN_IP, LOG_PORT))
+        s.connect((admin_ip, LOG_PORT))
         s.sendall(f"ACTION: GET_USER_INFO | USER: {username}".encode())
         response = s.recv(4096).decode()
         s.close()
@@ -60,8 +63,6 @@ def update_student_card_name(self, username, ip, role="student"):
     dashboard (is_admin_monitor=True) always shows everyone, students and
     teachers alike."""
     from .student_cards import create_student_card, build_card_label
-
-    role = get_registered_ip_role(ip) or role
 
     dashboard_check = getattr(self, "active_teacher_dashboard", None)
     is_admin_context = getattr(dashboard_check, "is_admin_monitor", False)
@@ -181,7 +182,10 @@ def update_thumbnail_frame_for(dashboard, ip, img_tk):
         lbl.image = img_tk
 
 
-def update_thumbnail_frame(self, ip, img_tk):
+def update_thumbnail_frame(self, ip, image, source_conn=None):
+    if source_conn is not None and self.connected_students.get(ip) is not source_conn:
+        return
+    img_tk = ImageTk.PhotoImage(image)
     if not hasattr(self, "latest_frames"):
         self.latest_frames = {}
     self.latest_frames[ip] = img_tk
@@ -199,11 +203,14 @@ def start_alert_monitoring(self, dashboard):
         if not dashboard.winfo_exists():
             return
         try:
+            admin_ip = get_admin_ip()
+            if not admin_ip:
+                raise OSError("Admin server was not discovered on this LAN.")
             request = "ACTION: GET_ALERTS | ACTIVE: 1"
             teacher_id = getattr(self, "current_teacher_user_id", None)
             if teacher_id and not getattr(dashboard, "is_admin_monitor", False):
                 request += f" | TEACHERID: {teacher_id}"
-            with _socket.create_connection((ADMIN_IP, LOG_PORT), timeout=2) as sock:
+            with _socket.create_connection((admin_ip, LOG_PORT), timeout=2) as sock:
                 sock.sendall(request.encode())
                 alerts = _json.loads(sock.recv(65536).decode() or "[]")
             alert_ips = {alert.get("ip_address") for alert in alerts if alert.get("ip_address")}
@@ -255,6 +262,16 @@ def _parse_handshake(raw_user_info, fallback_ip):
     return username, role
 
 
+def _read_handshake(conn, limit=128):
+    handshake = bytearray()
+    while len(handshake) < limit and not handshake.endswith(b"\n"):
+        packet = conn.recv(1)
+        if not packet:
+            break
+        handshake.extend(packet)
+    return handshake.decode("utf-8", errors="ignore").strip()
+
+
 def start_persistent_stream_listeners(self):
     """Call exactly ONCE, from LoginApp.__init__. self is the LoginApp
     instance and lives for the whole program, so these listeners never get
@@ -285,7 +302,7 @@ def start_persistent_stream_listeners(self):
         role = "student"
         try:
             conn.settimeout(3.0)
-            raw_user_info = conn.recv(128).decode('utf-8', errors='ignore').strip()
+            raw_user_info = _read_handshake(conn)
             conn.settimeout(None)
             username, role = _parse_handshake(raw_user_info, student_ip)
         except Exception:
@@ -312,19 +329,25 @@ def start_persistent_stream_listeners(self):
                     frame_data += packet
 
                 if len(frame_data) == frame_length:
-                    image = Image.open(io.BytesIO(frame_data)).resize((240, 150), Image.Resampling.LANCZOS)
-                    img_tk = ImageTk.PhotoImage(image)
+                    image = Image.open(io.BytesIO(frame_data)).convert("RGB").resize(
+                        (240, 150), Image.Resampling.LANCZOS
+                    )
                     if hasattr(self, 'after'):
-                        self.after(0, lambda ip=student_ip, img=img_tk: update_thumbnail_frame(self, ip, img))
+                        self.after(0, lambda ip=student_ip, frame=image, source=conn:
+                                   update_thumbnail_frame(self, ip, frame, source))
         except Exception as e:
             print(f"Stream error with {student_ip}: {e}")
         finally:
             conn.close()
-            if student_ip in self.connected_students:
+            is_current_connection = self.connected_students.get(student_ip) is conn
+            if is_current_connection:
                 del self.connected_students[student_ip]
-            self.handshake_roles.pop(student_ip, None)
+                self.handshake_roles.pop(student_ip, None)
+                self.latest_frames.pop(student_ip, None)
 
             def remove_card_ui():
+                if not is_current_connection:
+                    return
                 dashboard = getattr(self, "active_teacher_dashboard", None)
                 if dashboard and student_ip in dashboard.student_cards:
                     try:
@@ -337,20 +360,8 @@ def start_persistent_stream_listeners(self):
 
             if hasattr(self, 'after'):
                 self.after(0, remove_card_ui)
-                self.after(0, lambda: record_logout(self, student_ip))
-
-            def force_close_db_session():
-                from database import db
-                username = self.ip_to_username.get(student_ip) if hasattr(self, "ip_to_username") else None
-                if username:
-                    user = db.get_user_by_username(username)
-                    if user:
-                        session_id = db.get_active_session_id(user["id"])
-                        if session_id:
-                            db.end_session(session_id)
-
-            if hasattr(self, 'after'):
-                self.after(0, force_close_db_session)
+                if is_current_connection:
+                    self.after(0, lambda: record_logout(self, student_ip))
 
     def stream_listener():
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

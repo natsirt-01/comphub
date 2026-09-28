@@ -1,7 +1,7 @@
 import customtkinter as ctk
 import socket
 import json
-from network_config import ADMIN_IP, LOG_PORT
+from network_config import LOG_PORT, get_admin_ip
 from ui_utils import center_window
 from config import COLORS
 
@@ -10,7 +10,10 @@ def _send_request(payload, expect_response=True):
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(5)
-        s.connect((ADMIN_IP, LOG_PORT))
+        admin_ip = get_admin_ip()
+        if not admin_ip:
+            return [] if expect_response else None
+        s.connect((admin_ip, LOG_PORT))
         s.sendall(payload.encode())
         if expect_response:
             response = s.recv(8192).decode()

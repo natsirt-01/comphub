@@ -16,7 +16,7 @@ import screen_sender
 from student_webcam_window import StudentWebcamOverlay
 import pygetwindow as gw
 from ui_utils import center_window, apply_theme, COLORS, maximize_window
-from network_config import TEACHER_IP, LOG_PORT, LISTENER_PORT, BROADCAST_PORT, ADMIN_IP
+from network_config import LOG_PORT, LISTENER_PORT, BROADCAST_PORT, get_admin_ip
 USER_FILE = "users.json"
 apply_theme()
 
@@ -369,6 +369,7 @@ class StudentDashboard(ctk.CTkToplevel):
         self.master_app = master_app
         self.title(f"Student Portal - {self.username}")
         self.configure(fg_color=COLORS["surface"])
+        self.protocol("WM_DELETE_WINDOW", self.logout)
         center_window(self, 900, 620)
         maximize_window(self)
         
@@ -433,8 +434,12 @@ class StudentDashboard(ctk.CTkToplevel):
             return
 
         try:
+            admin_ip = self.master_app.refresh_admin_ip()
+            if not admin_ip:
+                self.msg.configure(text="Admin is not available on this local network.", text_color="red")
+                return
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client.connect((ADMIN_IP, LOG_PORT))
+            client.connect((self.master_app.admin_ip, LOG_PORT))
             msg = f"ACTION: CHANGE_PWD | USER: {self.username} | OLDPWD: {old_pwd} | NEWPWD: {new_pwd}"
             client.send(msg.encode())
             response = client.recv(1024).decode().strip()
@@ -454,7 +459,11 @@ class StudentDashboard(ctk.CTkToplevel):
             self.msg.configure(text="Enter your current password and a display name.", text_color="orange")
             return
         try:
-            with socket.create_connection((ADMIN_IP, LOG_PORT), timeout=3) as client:
+            admin_ip = self.master_app.refresh_admin_ip()
+            if not admin_ip:
+                self.msg.configure(text="Admin is not available on this local network.", text_color="red")
+                return
+            with socket.create_connection((admin_ip, LOG_PORT), timeout=3) as client:
                 request = f"ACTION: UPDATE_PROFILE | USER: {self.username} | PWD: {password} | FULLNAME: {full_name}"
                 client.sendall(request.encode())
                 response = client.recv(1024).decode().strip()
@@ -471,9 +480,12 @@ class StudentDashboard(ctk.CTkToplevel):
             widget.destroy()
 
         try:
+            admin_ip = self.master_app.refresh_admin_ip()
+            if not admin_ip:
+                raise OSError("Admin is not available on this local network.")
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client.settimeout(3)
-            client.connect((ADMIN_IP, LOG_PORT))
+            client.connect((self.master_app.admin_ip, LOG_PORT))
             client.send(f"ACTION: GET_HISTORY | USER: {self.username}".encode())
             response = client.recv(8192).decode()
             client.close()
@@ -552,6 +564,8 @@ class LoginApp(ctk.CTk):
         self.demo_window = None
         self.webcam_overlay = None
         self.in_demo_mode = False
+        self.admin_ip = None
+        self.teacher_ip = None
         self.load_users()
         self.blocklist_cache = []
         threading.Thread(target=self.refresh_blocklist_periodically, daemon=True).start()
@@ -600,7 +614,7 @@ class LoginApp(ctk.CTk):
         self.error_label.pack(pady=3)
         
         ctk.CTkButton(login_panel, text="Create an Account", fg_color="transparent", text_color=COLORS["navy_panel"], 
-                  hover_color=COLORS["surface_alt"], command=lambda: RegisterWindow(self, ADMIN_IP, LOG_PORT)).pack(pady=3)
+              hover_color=COLORS["surface_alt"], command=self.open_registration).pack(pady=3)
 
     def load_users(self):
         if os.path.exists(USER_FILE):
@@ -609,6 +623,10 @@ class LoginApp(ctk.CTk):
         else:
             self.USERS = {"student": {"password": "student123", "role": "Student"}}
             self.save_users()
+
+    def refresh_admin_ip(self):
+        self.admin_ip = get_admin_ip(timeout=1.0)
+        return self.admin_ip
 
     def save_users(self):
         with open(USER_FILE, "w") as f:
@@ -660,13 +678,19 @@ class LoginApp(ctk.CTk):
                     if current_window != last_window:
                         last_window = current_window
 
+                        if not self.refresh_admin_ip():
+                            time.sleep(1)
+                            continue
+
                         for entry in self.blocklist_cache:
                             if entry["keyword"].lower() in current_window.lower():
                                 self.after(0, lambda t=current_window, c=entry["category"]: self.show_restricted_warning(t, c))
                                 break
 
                         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        s.connect((TEACHER_IP, LOG_PORT))
+                        if not self.teacher_ip:
+                            continue
+                        s.connect((self.teacher_ip, LOG_PORT))
                         message = f"ACTIVITY: {socket.gethostname()} ({username_val}) - {current_window}"
                         s.sendall(message.encode('utf-8'))
                         s.close()
@@ -685,7 +709,8 @@ class LoginApp(ctk.CTk):
     def _open_pov_viewer(self):
         if self.pov_viewer and self.pov_viewer.winfo_exists():
             return
-        self.pov_viewer = TeacherPOVViewer(self, TEACHER_IP, BROADCAST_PORT)
+        if self.teacher_ip and self.refresh_admin_ip():
+            self.pov_viewer = TeacherPOVViewer(self, self.teacher_ip, BROADCAST_PORT)
 
     def _close_pov_viewer(self):
         if self.pov_viewer:
@@ -700,7 +725,10 @@ class LoginApp(ctk.CTk):
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                s.connect((TEACHER_IP, BROADCAST_PORT))
+                if not self.teacher_ip or not self.refresh_admin_ip():
+                    time.sleep(0.5)
+                    continue
+                s.connect((self.teacher_ip, BROADCAST_PORT))
                 
                 while self.in_demo_mode:
                     header = s.recv(4)
@@ -727,9 +755,13 @@ class LoginApp(ctk.CTk):
 
     def fetch_blocklist(self):
         try:
+            admin_ip = self.refresh_admin_ip()
+            if not admin_ip:
+                self.blocklist_cache = []
+                return
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client.settimeout(3)
-            client.connect((ADMIN_IP, LOG_PORT))
+            client.connect((admin_ip, LOG_PORT))
             client.send("ACTION: GET_BLOCKLIST".encode())
             response = client.recv(4096).decode()
             client.close()
@@ -742,6 +774,13 @@ class LoginApp(ctk.CTk):
         while True:
             self.fetch_blocklist()
             time.sleep(30)
+
+    def open_registration(self):
+        admin_ip = self.refresh_admin_ip()
+        if not admin_ip:
+            self.error_label.configure(text="Hindi makita ang Admin sa local network.", text_color=COLORS["danger"])
+            return
+        RegisterWindow(self, admin_ip, LOG_PORT)
     def show_restricted_warning(self, window_text, category):
         if hasattr(self, "restricted_warning") and self.restricted_warning and self.restricted_warning.winfo_exists():
             return
@@ -875,20 +914,31 @@ class LoginApp(ctk.CTk):
         webbrowser.open_new_tab(url)
 
     def fetch_teachers_and_labs(self):
+        self.admin_ip = get_admin_ip(timeout=3)
+        if not self.admin_ip:
+            self.teacher_dropdown.configure(values=["Admin not found on this LAN"])
+            self.lab_dropdown.configure(values=["Admin not found on this LAN"])
+            self.error_label.configure(text="Kailangan nasa parehong local Wi-Fi ang Admin at Student.", text_color=COLORS["danger"])
+            self.after(5000, self.fetch_teachers_and_labs)
+            return
         try:
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client.settimeout(3)
-            client.connect((ADMIN_IP, LOG_PORT))
+            client.connect((self.admin_ip, LOG_PORT))
             client.send("ACTION: GET_TEACHERS".encode())
             response = client.recv(4096).decode()
             client.close()
             teachers = json.loads(response)
-            if teachers:
-                self.teacher_map = {f"{t['full_name']} ({t['username']})": t["id"] for t in teachers}
+            online_teachers = [teacher for teacher in teachers if teacher.get("ip_address")]
+            if online_teachers:
+                self.teacher_map = {f"{t['full_name']} ({t['username']})": t["id"] for t in online_teachers}
+                self.teacher_ip_map = {f"{t['full_name']} ({t['username']})": t["ip_address"] for t in online_teachers}
                 self.teacher_dropdown.configure(values=list(self.teacher_map.keys()))
                 self.teacher_dropdown.set(list(self.teacher_map.keys())[0])
             else:
-                self.teacher_dropdown.configure(values=["No teachers found"])
+                self.teacher_map = {}
+                self.teacher_ip_map = {}
+                self.teacher_dropdown.configure(values=["No online teachers"])
         except Exception as e:
             self.teacher_dropdown.configure(values=["Connection failed"])
             print(f"[ERROR fetch_teachers]: {e}")
@@ -896,7 +946,7 @@ class LoginApp(ctk.CTk):
         try:
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client.settimeout(3)
-            client.connect((ADMIN_IP, LOG_PORT))
+            client.connect((self.admin_ip, LOG_PORT))
             client.send("ACTION: GET_LABS".encode())
             response = client.recv(4096).decode()
             client.close()
@@ -911,6 +961,9 @@ class LoginApp(ctk.CTk):
             self.lab_dropdown.configure(values=["Connection failed"])
             print(f"[ERROR fetch_labs]: {e}")
 
+        if not getattr(self, "teacher_ip_map", {}):
+            self.after(5000, self.fetch_teachers_and_labs)
+
     def check_login(self):
         user = self.user_entry.get().strip()
         pwd = self.pass_entry.get().strip()
@@ -919,18 +972,24 @@ class LoginApp(ctk.CTk):
             self.error_label.configure(text="Punan ang lahat ng kahon.", text_color="orange")
             return
 
+        if not self.refresh_admin_ip():
+            self.error_label.configure(text="Hindi makita ang Admin sa local network.", text_color=COLORS["danger"])
+            return
+
         selected_teacher_name = self.teacher_dropdown.get()
         selected_lab_name = self.lab_dropdown.get()
         teacher_id = self.teacher_map.get(selected_teacher_name)
+        teacher_ip = getattr(self, "teacher_ip_map", {}).get(selected_teacher_name)
         lab_id = self.lab_map.get(selected_lab_name)
 
-        if not teacher_id or not lab_id:
-            self.error_label.configure(text="Pumili ng teacher at lab.", text_color="orange")
+        if not teacher_id or not lab_id or not teacher_ip:
+            self.error_label.configure(text="Pumili ng online na teacher at lab sa network na ito.", text_color="orange")
             return
 
         try:
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client.connect((ADMIN_IP, LOG_PORT))
+            client.settimeout(4)
+            client.connect((self.admin_ip, LOG_PORT))
 
             msg = f"ACTION: LOGIN_CHECK | USER: {user} | PWD: {pwd} | TEACHERID: {teacher_id} | LABID: {lab_id}"
             client.send(msg.encode())
@@ -946,13 +1005,14 @@ class LoginApp(ctk.CTk):
 
                 self.notify_teacher("LOGIN", user)
 
-                threading.Thread(target=screen_sender.start_stream, args=(TEACHER_IP,), daemon=True).start()
-                threading.Thread(target=screen_sender.start_admin_stream, daemon=True).start()
-                threading.Thread(target=screen_sender.start_live_monitoring, args=(TEACHER_IP,), daemon=True).start()
-                threading.Thread(target=screen_sender.start_live_monitoring, args=(ADMIN_IP,), daemon=True).start()
+                self.teacher_ip = teacher_ip
+                threading.Thread(target=screen_sender.start_stream, args=(teacher_ip,), daemon=True).start()
+                threading.Thread(target=screen_sender.start_admin_stream, args=(self.admin_ip,), daemon=True).start()
+                threading.Thread(target=screen_sender.start_live_monitoring, args=(teacher_ip,), daemon=True).start()
+                threading.Thread(target=screen_sender.start_live_monitoring, args=(self.admin_ip, True), daemon=True).start()
 
                 self.withdraw()
-                self.webcam_overlay = StudentWebcamOverlay(self, username=user, teacher_ip=TEACHER_IP, log_port=LOG_PORT)
+                self.webcam_overlay = StudentWebcamOverlay(self, username=user, teacher_ip=teacher_ip, log_port=LOG_PORT)
                 StudentDashboard(username=user, master_app=self)
 
             elif response == "TEACHER_OFFLINE":
@@ -966,8 +1026,12 @@ class LoginApp(ctk.CTk):
         
     def notify_teacher(self, action, username):
         try:
+            admin_ip = self.refresh_admin_ip()
+            if not admin_ip:
+                return
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client.connect((ADMIN_IP, LOG_PORT))
+            client.settimeout(3)
+            client.connect((admin_ip, LOG_PORT))
             msg = f"ACTION: {action} | USER: {username}"
             client.send(msg.encode())
             client.close()
@@ -976,7 +1040,10 @@ class LoginApp(ctk.CTk):
 
     def notify_site_alert(self, username, text, category, status):
         try:
-            with socket.create_connection((ADMIN_IP, LOG_PORT), timeout=3) as client:
+            admin_ip = self.refresh_admin_ip()
+            if not admin_ip:
+                return
+            with socket.create_connection((admin_ip, LOG_PORT), timeout=3) as client:
                 client.sendall(
                     f"ACTION: SITE_ALERT | USER: {username} | TEXT: {text} | "
                     f"CATEGORY: {category} | STATUS: {status}".encode()

@@ -30,7 +30,19 @@ The Student executable bundles OpenCV, DeepFace, and TensorFlow, so packaging an
 
 ## Network Setup
 
-Allow the application ports through Windows Firewall on the server and lab network: TCP `5001`, `5050`, `9996`, `9997`, `9998`, and `9999`. Use stable IPv4 addresses for the Teacher stream host and Admin/login server. Keep the Student client installed and running on each lab PC; its authenticated login and stream connection automatically populate live monitoring and lab occupancy. The installer configures addresses but does not create firewall rules or discover arbitrary devices that do not run the client.
+The Admin host advertises itself with UDP broadcast discovery on port `37020` after an Admin signs in. Teacher clients send their LAN address to Admin when they select a lab; Student clients discover Admin and receive the online Teacher address from the server. No Admin, Teacher, or Student IP list is configured manually. Discovery is limited to the local broadcast network, so clients on another Wi-Fi/LAN cannot discover the server. Some access points enable wireless client isolation; disable that setting for the lab SSID or local clients cannot reach each other.
+
+The setup wizard adds and removes Windows Firewall rules for UDP `37020` and TCP `5001`, `5050`, `9996`-`9999`, restricted to the local subnet. Keep the Student client installed and running on each lab PC; authenticated login and the stream handshake populate live monitoring and lab occupancy. Discovery does not identify unmanaged devices that do not run the client.
+
+## Startup Flow
+
+1. Connect the Admin, Teacher, and Student computers to the same local Wi-Fi/LAN. Disable wireless client isolation. When running from source, allow the app through Windows Firewall; the installer creates the local-subnet rules automatically.
+2. On the Admin computer, run `thesis-main/login.py` and sign in with the Admin account. Keep it open; the Admin service begins LAN discovery after Admin authentication.
+3. On the Teacher computer, run `thesis-main/login.py`, sign in with the Teacher account, and select the lab. The Teacher discovers Admin and announces its current LAN address.
+4. On each Student computer, install dependencies from the workspace root with `python -m pip install -r Student/requirements.txt`, then run `Student/login_student.py`. The screen discovers Admin and lists online Teachers only. Select the Teacher and matching lab, then sign in with an approved Student account.
+5. The authenticated Student stream connects to Admin and the selected Teacher. Their Monitoring cards show the live screen; Admin Lab Monitoring shows one active occupancy card per account. Student logout or closing the Student Portal ends the session.
+
+If Admin or Teacher is not listed, first confirm Admin is signed in, both machines share the same reachable LAN, the firewall rules are active, and client isolation is disabled. Different Wi-Fi networks do not receive the local broadcast discovery response.
 
 ## SDLC and Installation Lifecycle
 
@@ -38,6 +50,6 @@ Allow the application ports through Windows Firewall on the server and lab netwo
 2. **Requirements:** Confirm supported Windows machines, Python 3.11 build environment, camera/screen-capture needs, and account approval policies.
 3. **Design:** Keep user/session/rule data on the server in SQLite; use authenticated Student-client sessions for lab occupancy; separate passive Admin occupancy cards from command-capable live monitoring cards.
 4. **Implementation:** Maintain the role applications, schema, network protocol, blocklist editor, history filters, and installer sources in this repository.
-5. **Verification:** Compile changed Python modules, exercise date-range logic, test account approval and blocklist propagation, and verify lab occupancy and screen streams on the target LAN.
-6. **Deployment:** Build `CompHub-Setup.exe`, install the Server on the designated host, install Student on lab PCs, enter the same network addresses in each wizard, and verify firewall access.
+5. **Verification:** Compile changed Python modules, exercise date-range logic, test account approval and blocklist propagation, and verify LAN discovery, lab occupancy, and screen streams on the target Wi-Fi.
+6. **Deployment:** Build `CompHub-Setup.exe`, install the Server on the designated host, install Student on lab PCs, sign in to Admin first, and verify local discovery and firewall access.
 7. **Operations and maintenance:** Back up `%ProgramData%\CompHub\scholarnet.db`, distribute tested installer updates, confirm active sessions and rule propagation after updates, and uninstall only after preserving the database if it must be retained.

@@ -321,7 +321,11 @@ def get_lab_occupancy(lab_id):
             """SELECT u.*, s.pc_name, s.ip_address, s.login_time
                FROM users u
                JOIN sessions s ON s.user_id = u.id
-               WHERE s.lab_id = ? AND s.logout_time IS NULL""",
+               WHERE s.lab_id = ? AND s.logout_time IS NULL
+                 AND s.id = (
+                     SELECT MAX(s2.id) FROM sessions s2
+                     WHERE s2.user_id = s.user_id AND s2.logout_time IS NULL
+                 )""",
             (lab_id,),
         ).fetchall()
         results = [dict(r) for r in rows]
@@ -336,6 +340,13 @@ def get_lab_occupancy(lab_id):
 
 def start_session(user_id, lab_id=None, pc_name=None, ip_address=None):
     with get_conn() as conn:
+        conn.execute(
+            """UPDATE sessions
+               SET logout_time=strftime('%Y-%m-%d %H:%M:%S', 'now'),
+                   duration_secs=MAX(0, CAST((julianday('now') - julianday(login_time)) * 86400 AS INTEGER))
+               WHERE user_id=? AND logout_time IS NULL""",
+            (user_id,),
+        )
         cur = conn.execute(
             """INSERT INTO sessions (user_id, lab_id, pc_name, ip_address)
                VALUES (?, ?, ?, ?)""",

@@ -2,9 +2,9 @@ import customtkinter as ctk
 import tkinter.ttk as ttk
 import socket
 import json
-from network_config import ADMIN_IP, LOG_PORT
+from network_config import LOG_PORT, get_admin_ip
 from ui_utils import center_window
-from config import COLORS, maximize_window
+from config import COLORS
 from .date_filters import matches_date_range, parse_date_range
 
 
@@ -12,7 +12,10 @@ def _fetch_history_from_admin():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(5)
-        s.connect((ADMIN_IP, LOG_PORT))
+        admin_ip = get_admin_ip()
+        if not admin_ip:
+            return []
+        s.connect((admin_ip, LOG_PORT))
         s.sendall("ACTION: GET_ALL_HISTORY".encode())
         response = s.recv(65536).decode()
         s.close()
