@@ -6,6 +6,7 @@ import socket
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 if getattr(sys, "frozen", False):
     _CONFIG_PATH = os.path.join(os.path.dirname(sys.executable), "network_config.json")
@@ -70,7 +71,7 @@ def discover_admin_ip(timeout=4.0):
             except OSError as error:
                 print(f"[LAN discovery] Broadcast to {destination} failed: {error}")
 
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + min(1.0, timeout)
         fallback_ip = None
         fallback_priority = 3
         fallback_deadline = None
@@ -97,7 +98,51 @@ def discover_admin_ip(timeout=4.0):
                         fallback_priority = response_priority
                         fallback_deadline = time.monotonic() + min(0.4, timeout)
         except socket.timeout:
-            return fallback_ip
+            if fallback_ip:
+                return fallback_ip
+
+    return _discover_admin_over_tcp(interface_networks, timeout)
+
+
+def _discover_admin_over_tcp(interface_networks, timeout):
+    networks = sorted(interface_networks, key=lambda item: item[0])
+    candidates = []
+    seen = set()
+    for _priority, network in networks:
+        if not network.is_private or network.prefixlen < 22:
+            continue
+        for host in network.hosts():
+            address = str(host)
+            if address not in seen:
+                seen.add(address)
+                candidates.append(address)
+                if len(candidates) >= 1024:
+                    break
+        if len(candidates) >= 1024:
+            break
+
+    def probe(address):
+        try:
+            with socket.create_connection((address, LOG_PORT), timeout=0.25) as client:
+                client.settimeout(0.25)
+                client.sendall(b"ACTION: DISCOVER_ADMIN")
+                if client.recv(64).decode("ascii", errors="ignore").strip() == "COMPHUB_ADMIN":
+                    return address
+        except OSError:
+            return None
+        return None
+
+    deadline = time.monotonic() + min(timeout, 2.5)
+    with ThreadPoolExecutor(max_workers=64) as executor:
+        futures = {executor.submit(probe, address) for address in candidates}
+        try:
+            for future in as_completed(futures, timeout=max(0.1, deadline - time.monotonic())):
+                address = future.result()
+                if address:
+                    return address
+        except TimeoutError:
+            pass
+    return None
 
 
 _cached_admin_ip = None

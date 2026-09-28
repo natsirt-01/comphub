@@ -918,7 +918,7 @@ class LoginApp(ctk.CTk):
         if not self.admin_ip:
             self.teacher_dropdown.configure(values=["Admin not found on this LAN"])
             self.lab_dropdown.configure(values=["Admin not found on this LAN"])
-            self.error_label.configure(text="Kailangan nasa parehong local Wi-Fi ang Admin at Student.", text_color=COLORS["danger"])
+            self.error_label.configure(text="Hindi makita ang Admin app. Tiyaking bukas ito at nasa parehong local network ang computers.", text_color=COLORS["danger"])
             self.after(5000, self.fetch_teachers_and_labs)
             return
         try:

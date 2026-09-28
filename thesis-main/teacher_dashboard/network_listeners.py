@@ -198,6 +198,7 @@ def update_thumbnail_frame(self, ip, image, source_conn=None):
 def start_alert_monitoring(self, dashboard):
     """Poll Admin's alert store so monitoring cards reflect restricted sites."""
     from .student_cards import set_card_restricted
+    poll_state = {"last_error": None}
 
     def poll():
         if not dashboard.winfo_exists():
@@ -216,8 +217,12 @@ def start_alert_monitoring(self, dashboard):
             alert_ips = {alert.get("ip_address") for alert in alerts if alert.get("ip_address")}
             for ip in list(getattr(dashboard, "student_cards", {})):
                 set_card_restricted(dashboard, ip, ip in alert_ips)
+            poll_state["last_error"] = None
         except (OSError, ValueError) as error:
-            print(f"[DEBUG alert monitor] {error}")
+            message = str(error)
+            if message != poll_state["last_error"]:
+                print(f"[DEBUG alert monitor] {message}")
+                poll_state["last_error"] = message
         dashboard.after(1500, poll)
 
     dashboard.after(500, poll)

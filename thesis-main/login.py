@@ -108,7 +108,10 @@ class LoginApp(ctk.CTk):
         self.btn_login = ctk.CTkButton(login_panel, text="Sign In", height=42, fg_color=COLORS["blue"],
                            hover_color=COLORS["blue_hover"], command=self.check_login)
         self.btn_login.pack(pady=(18, 8), padx=38, fill="x")
-        self.error_label = ctk.CTkLabel(login_panel, text="", text_color=COLORS["danger"])
+        self.error_label = ctk.CTkLabel(
+            login_panel, text="", text_color=COLORS["danger"], wraplength=340,
+            justify="center",
+        )
         self.error_label.pack(pady=(0, 4))
 
     def start_log_listener(self):
@@ -126,6 +129,9 @@ class LoginApp(ctk.CTk):
                 
                 if "ACTION: LOGIN_CHECK" in data:
                     self.handle_login_check(conn, data)
+                elif data == "ACTION: DISCOVER_ADMIN":
+                    conn.sendall(b"COMPHUB_ADMIN")
+                    conn.close()
                 elif "ACTION: GET_TEACHERS" in data:
                     self.handle_get_teachers(conn)
                 elif "ACTION: GET_LABS" in data:
@@ -219,7 +225,7 @@ class LoginApp(ctk.CTk):
             try:
                 request, address = discovery_socket.recvfrom(256)
                 parts = request.decode("ascii", errors="ignore").split("|")
-                if len(parts) == 3 and parts[0:2] == ["COMPHUB_DISCOVER", "ADMIN"] and self.is_admin_node:
+                if len(parts) == 3 and parts[0:2] == ["COMPHUB_DISCOVER", "ADMIN"]:
                     discovery_socket.sendto(
                         f"COMPHUB_SERVICE|ADMIN|{parts[2]}".encode("ascii"), address
                     )
@@ -828,11 +834,11 @@ class LoginApp(ctk.CTk):
         password = self.pass_entry.get()
 
         try:
-            admin_ip = discover_admin_ip(timeout=1.5)
+            admin_ip = discover_admin_ip(timeout=4.0)
             if not admin_ip and username.strip().lower() == "admin":
                 admin_ip = "127.0.0.1"
             if not admin_ip:
-                raise OSError("Hindi makita ang Admin server sa local network. Siguraduhing naka-login at nasa parehong Wi-Fi.")
+                raise OSError("Hindi makita ang Admin app. Tiyaking bukas ito at nasa parehong local network ang computers.")
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(5)
             s.connect((admin_ip, 5001))
