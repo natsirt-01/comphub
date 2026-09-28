@@ -107,12 +107,27 @@ def seed_defaults():
     """Ensure a default admin and teacher account exist so the app is usable
     on a fresh database. Safe to call every startup — does nothing if they
     already exist."""
-    if not get_user_by_username("admin"):
-        create_staff_user("admin", "admin", "admin", full_name="Administrator")
-    if not get_user_by_username("teacher"):
-        create_staff_user("teacher", "teacher", "teacher", full_name="Sir Peter")
+    defaults = (
+        ("admin", "admin123", "admin", "Administrator", "admin"),
+        ("teacher", "teacher123", "teacher", "Sir Peter", "teacher"),
+    )
+    for username, password, role, full_name, legacy_password in defaults:
+        user = get_user_by_username(username)
+        if not user:
+            create_staff_user(username, password, role, full_name=full_name)
+        elif _check_password(legacy_password, user["password_hash"], user["password_salt"]):
+            _update_password(user["id"], password)
     if not get_user_by_username("student"):
         create_student_user("student", "student", full_name="Patwick")
+
+
+def _update_password(user_id, password):
+    pw_hash, salt = _hash_password(password)
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET password_hash=?, password_salt=? WHERE id=?",
+            (pw_hash, salt, user_id),
+        )
 
 
 def create_staff_user(username, password, role, full_name=None):
@@ -353,6 +368,18 @@ def start_session(user_id, lab_id=None, pc_name=None, ip_address=None):
             (user_id, lab_id, pc_name, ip_address),
         )
         return cur.lastrowid
+
+
+def close_all_active_sessions():
+    """Close sessions left open when the server process previously stopped."""
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """UPDATE sessions
+               SET logout_time=strftime('%Y-%m-%d %H:%M:%S', 'now'),
+                   duration_secs=MAX(0, CAST((julianday('now') - julianday(login_time)) * 86400 AS INTEGER))
+               WHERE logout_time IS NULL"""
+        )
+        return cursor.rowcount
 
 
 def end_session(session_id):

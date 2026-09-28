@@ -54,6 +54,7 @@ class LoginApp(ctk.CTk):
         apply_widget_theme(self)
         db.init_db()
         db.seed_defaults()
+        db.close_all_active_sessions()
         
         self.title("CompHub Login - Teacher/Admin")
         self.configure(fg_color=COLORS["navy"])
@@ -67,6 +68,8 @@ class LoginApp(ctk.CTk):
         
         self.all_logs = [] 
         self.active_sessions = {} 
+        self.authenticated_student_ips = {}
+        self.pending_student_logins = {}
         self.active_broadcast = False
         self.broadcast_socket = None
         self.active_teacher_dashboard = None  # <--- Reference para sa student expressions
@@ -128,9 +131,10 @@ class LoginApp(ctk.CTk):
                 data = conn.recv(2048).decode('utf-8', errors='ignore').strip()
                 
                 if "ACTION: LOGIN_CHECK" in data:
-                    self.handle_login_check(conn, data)
+                    self.handle_login_check(conn, data, addr)
                 elif data == "ACTION: DISCOVER_ADMIN":
-                    conn.sendall(b"COMPHUB_ADMIN")
+                    if self.is_admin_node:
+                        conn.sendall(b"COMPHUB_ADMIN")
                     conn.close()
                 elif "ACTION: GET_TEACHERS" in data:
                     self.handle_get_teachers(conn)
@@ -151,7 +155,7 @@ class LoginApp(ctk.CTk):
                     self.handle_student_login_event(data, addr)
                     conn.close()
                 elif "ACTION: LOGOUT" in data:
-                    self.handle_student_logout_event(data)
+                    self.handle_student_logout_event(data, addr)
                 elif "ACTION: TEACHER_ONLINE" in data:
                     self.handle_teacher_online(data, addr[0])
                     conn.close()
@@ -225,7 +229,7 @@ class LoginApp(ctk.CTk):
             try:
                 request, address = discovery_socket.recvfrom(256)
                 parts = request.decode("ascii", errors="ignore").split("|")
-                if len(parts) == 3 and parts[0:2] == ["COMPHUB_DISCOVER", "ADMIN"]:
+                if self.is_admin_node and len(parts) == 3 and parts[0:2] == ["COMPHUB_DISCOVER", "ADMIN"]:
                     discovery_socket.sendto(
                         f"COMPHUB_SERVICE|ADMIN|{parts[2]}".encode("ascii"), address
                     )
@@ -340,7 +344,7 @@ class LoginApp(ctk.CTk):
         finally:
             conn.close()
 
-    def handle_login_check(self, conn, data):
+    def handle_login_check(self, conn, data, addr):
         try:
             parts = data.split("|")
             username = ""
@@ -376,6 +380,9 @@ class LoginApp(ctk.CTk):
                 return
 
             db.set_user_lab(user["id"], selected_lab_id)
+            self.pending_student_logins[(username, addr[0])] = (
+                selected_lab_id, time.monotonic()
+            )
             conn.send("SUCCESS".encode())
         except Exception as e:
             print(f"[ERROR sa login check]: {e}")
@@ -503,35 +510,36 @@ class LoginApp(ctk.CTk):
                 if "USER:" in part:
                     username = part.split("USER:")[1].strip()
 
+            pending_key = (username, addr[0])
+            pending = self.pending_student_logins.pop(pending_key, None)
+            if not pending or time.monotonic() - pending[1] > 30:
+                return
+
             user = db.get_user_by_username(username)
-            if user:
-                # A prior crash may have left a live flag behind; it must not
-                # color a newly logged-in student's card red.
-                db.close_active_site_alert(user["id"])
-                existing_session = db.get_active_session_id(user["id"])
-                if existing_session:
-                    self.active_sessions[username] = existing_session
-                    return
-                session_id = db.start_session(
-                    user["id"], lab_id=user.get("lab_id"),
-                    pc_name=addr[0], ip_address=addr[0]
-                )
-                self.active_sessions[username] = session_id
+            if not user or user["role"] != "student" or user["status"] != "approved":
+                return
+
+            db.close_active_site_alert(user["id"])
+            session_id = db.start_session(
+                user["id"], lab_id=pending[0],
+                pc_name=addr[0], ip_address=addr[0]
+            )
+            self.active_sessions[username] = session_id
+            self.authenticated_student_ips[username] = addr[0]
         except Exception as e:
             print(f"[ERROR sa login event]: {e}")
 
-    def handle_student_logout_event(self, data):
+    def handle_student_logout_event(self, data, addr):
         try:
             username = ""
             for part in data.split("|"):
                 if "USER:" in part:
                     username = part.split("USER:")[1].strip()
 
+            if self.authenticated_student_ips.get(username) != addr[0]:
+                return
             session_id = self.active_sessions.pop(username, None)
-            if session_id is None:
-                user = db.get_user_by_username(username)
-                if user:
-                    session_id = db.get_active_session_id(user["id"])
+            self.authenticated_student_ips.pop(username, None)
             if session_id:
                 db.end_session(session_id)
             user = db.get_user_by_username(username)
