@@ -277,6 +277,16 @@ def _read_handshake(conn, limit=128):
     return handshake.decode("utf-8", errors="ignore").strip()
 
 
+def _recv_exact(conn, byte_count):
+    data = bytearray()
+    while len(data) < byte_count:
+        packet = conn.recv(byte_count - len(data))
+        if not packet:
+            return None
+        data.extend(packet)
+    return bytes(data)
+
+
 def start_persistent_stream_listeners(self):
     """Call exactly ONCE, from LoginApp.__init__. self is the LoginApp
     instance and lives for the whole program, so these listeners never get
@@ -296,6 +306,8 @@ def start_persistent_stream_listeners(self):
         self.active_teacher_dashboard = None
     if not hasattr(self, "entity_roles"):
         self.entity_roles = {}
+    if not hasattr(self, "handshake_roles"):
+        self.handshake_roles = {}
     if not hasattr(self, "ip_to_username"):
         self.ip_to_username = {}
 
@@ -321,25 +333,21 @@ def start_persistent_stream_listeners(self):
 
         try:
             while True:
-                raw_length = conn.recv(4)
+                raw_length = _recv_exact(conn, 4)
                 if not raw_length:
                     break
                 frame_length = int.from_bytes(raw_length, byteorder='big')
-
-                frame_data = b""
-                while len(frame_data) < frame_length:
-                    packet = conn.recv(frame_length - len(frame_data))
-                    if not packet:
-                        break
-                    frame_data += packet
-
-                if len(frame_data) == frame_length:
-                    image = Image.open(io.BytesIO(frame_data)).convert("RGB").resize(
-                        (240, 150), Image.Resampling.LANCZOS
-                    )
-                    if hasattr(self, 'after'):
-                        self.after(0, lambda ip=student_ip, frame=image, source=conn:
-                                   update_thumbnail_frame(self, ip, frame, source))
+                if frame_length <= 0 or frame_length > 20 * 1024 * 1024:
+                    raise ValueError(f"Invalid frame size: {frame_length}")
+                frame_data = _recv_exact(conn, frame_length)
+                if frame_data is None:
+                    break
+                image = Image.open(io.BytesIO(frame_data)).convert("RGB").resize(
+                    (240, 150), Image.Resampling.LANCZOS
+                )
+                if hasattr(self, 'after'):
+                    self.after(0, lambda ip=student_ip, frame=image, source=conn:
+                               update_thumbnail_frame(self, ip, frame, source))
         except Exception as e:
             print(f"Stream error with {student_ip}: {e}")
         finally:
@@ -390,26 +398,22 @@ def start_persistent_stream_listeners(self):
         student_ip = addr[0]
         try:
             while True:
-                raw_length = conn.recv(4)
+                raw_length = _recv_exact(conn, 4)
                 if not raw_length:
                     break
                 frame_length = int.from_bytes(raw_length, byteorder='big')
+                if frame_length <= 0 or frame_length > 20 * 1024 * 1024:
+                    raise ValueError(f"Invalid frame size: {frame_length}")
+                frame_data = _recv_exact(conn, frame_length)
+                if frame_data is None:
+                    break
+                image = Image.open(io.BytesIO(frame_data))
 
-                frame_data = b""
-                while len(frame_data) < frame_length:
-                    packet = conn.recv(frame_length - len(frame_data))
-                    if not packet:
-                        break
-                    frame_data += packet
-
-                if len(frame_data) == frame_length:
-                    image = Image.open(io.BytesIO(frame_data))
-
-                    dashboard = getattr(self, "active_teacher_dashboard", None)
-                    if dashboard and hasattr(dashboard, 'active_viewers') and student_ip in dashboard.active_viewers:
-                        viewer = dashboard.active_viewers[student_ip]
-                        if viewer.winfo_exists():
-                            viewer.after(0, lambda img=image, v=viewer: v.update_image(img))
+                dashboard = getattr(self, "active_teacher_dashboard", None)
+                if dashboard and hasattr(dashboard, 'active_viewers') and student_ip in dashboard.active_viewers:
+                    viewer = dashboard.active_viewers[student_ip]
+                    if viewer.winfo_exists():
+                        viewer.after(0, lambda img=image, v=viewer: v.update_image(img))
         except Exception as e:
             print(f"Remote view error for {student_ip}: {e}")
         finally:
