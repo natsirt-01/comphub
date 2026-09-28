@@ -67,7 +67,7 @@ def open_inbox_window(master_dashboard):
         try:
             start, end = parse_date_range(start_entry.get(), end_entry.get())
         except ValueError as error:
-            filter_status.configure(text=str(error), text_color="red")
+            filter_status.configure(text=str(error), text_color=COLORS["danger"])
             return
 
         filtered_alerts = [a for a in alerts
@@ -77,7 +77,7 @@ def open_inbox_window(master_dashboard):
                          if matches_date_range(log.get("time"), start, end)]
 
         if filtered_alerts:
-            ctk.CTkLabel(frame, text="RESTRICTED SITE ALERTS", font=("Arial", 13, "bold"), text_color="red").pack(anchor="w", pady=(5, 5))
+            ctk.CTkLabel(frame, text="RESTRICTED SITE ALERTS", font=("Arial", 13, "bold"), text_color=COLORS["danger"]).pack(anchor="w", pady=(5, 5))
             for a in filtered_alerts:
                 display_name = a["full_name"] or a["username"]
                 text = f"[{a['timestamp']}] {display_name}: {a['matched_text']} ({a['category']})"
@@ -124,6 +124,6 @@ def open_inbox_window(master_dashboard):
 
     btn_row = ctk.CTkFrame(inbox_win, fg_color="transparent")
     btn_row.pack(pady=10)
-    ctk.CTkButton(btn_row, text="Clear Activity", fg_color=COLORS["danger"], hover_color="#a92e3b", command=clear_inbox).pack(side="left", padx=5)
+    ctk.CTkButton(btn_row, text="Clear Activity", fg_color=COLORS["danger"], hover_color=COLORS["pink_hover"], command=clear_inbox).pack(side="left", padx=5)
     if alerts:
         ctk.CTkButton(btn_row, text="Acknowledge Alerts", fg_color=COLORS["blue"], hover_color=COLORS["blue_hover"], command=acknowledge_alerts).pack(side="left", padx=5)

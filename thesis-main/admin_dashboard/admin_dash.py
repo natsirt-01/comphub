@@ -3,10 +3,10 @@ import tkinter.ttk as ttk
 import socket
 from database import db
 from teacher_dashboard.network_utils import send_command
-from network_config import STUDENT_PC_IP
+from network_config import CONFIG as NETWORK_CONFIG, save_ip_registry
 import tkinter as tk
 from tkinter import messagebox
-from teacher_dashboard.network_listeners import hydrate_dashboard, start_alert_monitoring
+from teacher_dashboard.network_listeners import hydrate_dashboard, start_alert_monitoring, update_student_card_name
 from teacher_dashboard.student_cards import create_occupancy_card
 from teacher_dashboard.date_filters import matches_date_range, parse_date_range
 from teacher_dashboard.screen_receiver import ScreenViewer
@@ -32,11 +32,11 @@ class AdminDashboard(ctk.CTkToplevel):
                     command=self.sleep_all).pack(side="left", padx=5, pady=12)
         ctk.CTkButton(top_bar, text="Restart All", fg_color=COLORS["blue"], hover_color=COLORS["blue_hover"], width=100,
                     command=self.restart_all).pack(side="left", padx=5, pady=12)
-        ctk.CTkButton(top_bar, text="Shutdown All", fg_color=COLORS["danger"], hover_color="#a92e3b", width=110,
+        ctk.CTkButton(top_bar, text="Shutdown All", fg_color=COLORS["danger"], hover_color=COLORS["pink_hover"], width=110,
                     command=self.shutdown_all).pack(side="left", padx=5, pady=12)
 
         # Right side Logout button
-        ctk.CTkButton(top_bar, text="Logout", fg_color=COLORS["danger"], hover_color="#a92e3b", width=100,
+        ctk.CTkButton(top_bar, text="Logout", fg_color=COLORS["danger"], hover_color=COLORS["pink_hover"], width=100,
                     command=self.logout_admin).pack(side="right", padx=15, pady=12)
 
         tabview = ctk.CTkTabview(self, fg_color=COLORS["surface"], segmented_button_fg_color=COLORS["navy_panel"], segmented_button_selected_color=COLORS["blue"], segmented_button_selected_hover_color=COLORS["blue_hover"])
@@ -49,6 +49,7 @@ class AdminDashboard(ctk.CTkToplevel):
         tabview.add("Lab Monitoring")
         tabview.add("Inventory")
         tabview.add("Blocking Rules")
+        tabview.add("IP Management")
 
         # --- Monitoring Tab ---
         self.student_cards = {}
@@ -100,7 +101,7 @@ class AdminDashboard(ctk.CTkToplevel):
         self.target_user_entry = ctk.CTkEntry(user_tab, placeholder_text="Enter Student Username", width=250)
         self.target_user_entry.pack(pady=10)
         
-        ctk.CTkButton(user_tab, text=f"Reset to Default Password", fg_color=COLORS["danger"], hover_color="#a92e3b", width=200,
+        ctk.CTkButton(user_tab, text=f"Reset to Default Password", fg_color=COLORS["danger"], hover_color=COLORS["pink_hover"], width=200,
                     command=self.reset_student_password).pack(pady=10)
 
         ctk.CTkLabel(user_tab, text="Update Account Display Name", font=ctk.CTkFont(size=14, weight="bold")).pack(pady=(20, 5))
@@ -149,7 +150,7 @@ class AdminDashboard(ctk.CTkToplevel):
         self.lab_buttons = {}
         labs = db.get_all_labs()
         for lab in labs:
-            btn = ctk.CTkButton(lab_btn_row, text=lab["name"], width=160, fg_color="#1f6aa5", hover_color="#144870",
+            btn = ctk.CTkButton(lab_btn_row, text=lab["name"], width=160, fg_color=COLORS["navy_panel"], hover_color=COLORS["pink_hover"],
                                 command=lambda lid=lab["id"], lname=lab["name"]: self.show_lab_occupancy(lid, lname))
             btn.pack(side="left", padx=10)
             self.lab_buttons[lab["id"]] = btn
@@ -178,7 +179,7 @@ class AdminDashboard(ctk.CTkToplevel):
         self.inv_item_name.pack(side="left", padx=5)
         self.inv_item_qty = ctk.CTkEntry(add_row, placeholder_text="Qty", width=80)
         self.inv_item_qty.pack(side="left", padx=5)
-        ctk.CTkButton(add_row, text="Add Item", fg_color="#1f6aa5", hover_color="#144870", command=self.add_inventory_item_ui).pack(side="left", padx=5)
+        ctk.CTkButton(add_row, text="Add Item", fg_color=COLORS["blue"], hover_color=COLORS["blue_hover"], command=self.add_inventory_item_ui).pack(side="left", padx=5)
 
         self.inv_status_label = ctk.CTkLabel(inv_tab, text="")
         self.inv_status_label.pack()
@@ -191,13 +192,13 @@ class AdminDashboard(ctk.CTkToplevel):
         borrow_row.pack(fill="x", pady=5)
 
         self.inv_item_map = {}
-        self.inv_item_dropdown = ctk.CTkOptionMenu(borrow_row, values=["No items yet"], width=200, fg_color="#1f6aa5", button_color="#144870")
+        self.inv_item_dropdown = ctk.CTkOptionMenu(borrow_row, values=["No items yet"], width=200, fg_color=COLORS["blue"], button_color=COLORS["blue_hover"])
         self.inv_item_dropdown.pack(side="left", padx=5)
         self.inv_borrower_name = ctk.CTkEntry(borrow_row, placeholder_text="Borrower name", width=180)
         self.inv_borrower_name.pack(side="left", padx=5)
         self.inv_borrow_qty = ctk.CTkEntry(borrow_row, placeholder_text="Qty", width=60)
         self.inv_borrow_qty.pack(side="left", padx=5)
-        ctk.CTkButton(borrow_row, text="Borrow", fg_color="#1f6aa5", hover_color="#144870", command=self.borrow_item_ui).pack(side="left", padx=5)
+        ctk.CTkButton(borrow_row, text="Borrow", fg_color=COLORS["blue"], hover_color=COLORS["blue_hover"], command=self.borrow_item_ui).pack(side="left", padx=5)
 
         ctk.CTkLabel(inv_tab, text="All Items", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=(15, 0))
         self.inv_items_frame = ctk.CTkScrollableFrame(inv_tab, height=100)
@@ -230,6 +231,28 @@ class AdminDashboard(ctk.CTkToplevel):
         self.blocking_rules_frame.pack(fill="both", expand=True, padx=12, pady=8)
         self.refresh_blocking_rules()
 
+        # --- IP Management Tab ---
+        ip_tab = tabview.tab("IP Management")
+        ctk.CTkLabel(ip_tab, text="Registered Computers", text_color=COLORS["ink"],
+                 font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        ctk.CTkLabel(ip_tab, text="Assign an IP to Student or Teacher. The saved role is used when that computer streams in.",
+                 text_color=COLORS["muted"], wraplength=700, justify="left").pack(anchor="w", padx=16, pady=(0, 12))
+
+        ip_form = ctk.CTkFrame(ip_tab, fg_color="transparent")
+        ip_form.pack(fill="x", padx=12, pady=6)
+        self.registered_ip_entry = ctk.CTkEntry(ip_form, placeholder_text="IPv4 address", width=230)
+        self.registered_ip_entry.pack(side="left", padx=5)
+        self.registered_ip_role = ctk.CTkSegmentedButton(ip_form, values=["Student", "Teacher"], width=220)
+        self.registered_ip_role.pack(side="left", padx=8)
+        self.registered_ip_role.set("Student")
+        ctk.CTkButton(ip_form, text="Add IP", fg_color=COLORS["blue"],
+                  hover_color=COLORS["blue_hover"], command=self.add_registered_ip).pack(side="left", padx=5)
+        self.ip_registry_status = ctk.CTkLabel(ip_tab, text="", anchor="w")
+        self.ip_registry_status.pack(fill="x", padx=16, pady=4)
+        self.ip_registry_frame = ctk.CTkScrollableFrame(ip_tab)
+        self.ip_registry_frame.pack(fill="both", expand=True, padx=12, pady=8)
+        self.refresh_ip_registry()
+
     def logout_admin(self):
         """Isara ang Admin Dashboard, ipakita ulit ang main window, at pumunta sa login screen."""
         self.destroy()
@@ -247,13 +270,13 @@ class AdminDashboard(ctk.CTkToplevel):
         user = db.get_user_by_username(username)
 
         if not user or user["role"] != "student":
-            self.status_label.configure(text="User not found!", text_color="red")
+            self.status_label.configure(text="User not found!", text_color=COLORS["danger"])
             return
 
         db.reset_to_default_password(user["id"])
         self.status_label.configure(
             text=f"Reset success! New password: {db.DEFAULT_RESET_PASSWORD}",
-            text_color="green"
+            text_color=COLORS["sky"]
         )
 
     def rename_user(self):
@@ -264,7 +287,7 @@ class AdminDashboard(ctk.CTkToplevel):
             self.status_label.configure(text="Enter an existing username and a display name.", text_color="orange")
             return
         db.update_user_full_name(user["id"], full_name)
-        self.status_label.configure(text=f"Updated display name for {username}.", text_color="green")
+        self.status_label.configure(text=f"Updated display name for {username}.", text_color=COLORS["sky"])
         self.rename_full_name_entry.delete(0, "end")
 
     def refresh_table(self, data=None):
@@ -272,7 +295,7 @@ class AdminDashboard(ctk.CTkToplevel):
         try:
             start, end = parse_date_range(self.history_start_date.get(), self.history_end_date.get())
         except ValueError as error:
-            self.history_filter_status.configure(text=str(error), text_color="red")
+            self.history_filter_status.configure(text=str(error), text_color=COLORS["danger"])
             return
         query = self.search_entry.get().strip().casefold()
         target = [entry for entry in target
@@ -314,11 +337,11 @@ class AdminDashboard(ctk.CTkToplevel):
             return
 
         if db.get_user_by_username(username):
-            self.teacher_create_status.configure(text="Username already taken.", text_color="red")
+            self.teacher_create_status.configure(text="Username already taken.", text_color=COLORS["danger"])
             return
 
         db.create_staff_user(username, password, "teacher", full_name=full_name)
-        self.teacher_create_status.configure(text=f"Teacher '{full_name}' created!", text_color="green")
+        self.teacher_create_status.configure(text=f"Teacher '{full_name}' created!", text_color=COLORS["sky"])
         self.new_teacher_user.delete(0, "end")
         self.new_teacher_pass.delete(0, "end")
         self.new_teacher_name.delete(0, "end")
@@ -387,19 +410,59 @@ class AdminDashboard(ctk.CTkToplevel):
             self.blocking_status.configure(text="Enter both a keyword and category.", text_color="orange")
             return
         if any(rule["keyword"].casefold() == keyword.casefold() for rule in db.get_blocklist()):
-            self.blocking_status.configure(text="That keyword already has a rule.", text_color="red")
+            self.blocking_status.configure(text="That keyword already has a rule.", text_color=COLORS["danger"])
             return
 
         db.add_blocklist_entry(keyword, category)
         self.block_keyword_entry.delete(0, "end")
         self.block_category_entry.delete(0, "end")
-        self.blocking_status.configure(text="Blocking rule added.", text_color="green")
+        self.blocking_status.configure(text="Blocking rule added.", text_color=COLORS["sky"])
         self.refresh_blocking_rules()
 
     def remove_blocking_rule(self, entry_id):
         db.remove_blocklist_entry(entry_id)
-        self.blocking_status.configure(text="Blocking rule removed.", text_color="green")
+        self.blocking_status.configure(text="Blocking rule removed.", text_color=COLORS["sky"])
         self.refresh_blocking_rules()
+
+    def refresh_ip_registry(self):
+        for widget in self.ip_registry_frame.winfo_children():
+            widget.destroy()
+
+        for role in ("student", "teacher"):
+            for address in NETWORK_CONFIG.get(f"{role}_pc_ip", []):
+                row = ctk.CTkFrame(self.ip_registry_frame)
+                row.pack(fill="x", padx=5, pady=4)
+                role_color = COLORS["pink"] if role == "student" else COLORS["sky"]
+                ctk.CTkLabel(row, text=role.capitalize(), width=100, text_color=role_color,
+                             font=ctk.CTkFont(weight="bold")).pack(side="left", padx=10, pady=8)
+                ctk.CTkLabel(row, text=address, anchor="w").pack(side="left", padx=8, fill="x", expand=True)
+                ctk.CTkButton(row, text="Remove", width=85, fg_color=COLORS["danger"],
+                              hover_color=COLORS["pink_hover"],
+                              command=lambda ip=address, kind=role: self.remove_registered_ip(ip, kind)).pack(side="right", padx=8, pady=5)
+
+    def add_registered_ip(self):
+        address = self.registered_ip_entry.get().strip()
+        role = self.registered_ip_role.get().lower()
+        try:
+            address = save_ip_registry(role, address)
+        except (ValueError, OSError) as error:
+            self.ip_registry_status.configure(text=f"Enter a valid IPv4 address: {error}", text_color=COLORS["danger"])
+            return
+        self.registered_ip_entry.delete(0, "end")
+        self.ip_registry_status.configure(text=f"{address} saved as {role}.", text_color=COLORS["success"])
+        if address in getattr(self.master_app, "connected_students", {}):
+            username = self.master_app.ip_to_username.get(address, f"User-{address}")
+            update_student_card_name(self.master_app, username, address, role)
+        self.refresh_ip_registry()
+
+    def remove_registered_ip(self, address, role):
+        save_ip_registry(role, address, remove=True)
+        self.ip_registry_status.configure(text=f"Removed {address} from {role} registry.", text_color=COLORS["muted"])
+        if address in getattr(self.master_app, "connected_students", {}):
+            username = self.master_app.ip_to_username.get(address, f"User-{address}")
+            handshake_role = self.master_app.handshake_roles.get(address, "student")
+            update_student_card_name(self.master_app, username, address, handshake_role)
+        self.refresh_ip_registry()
 
     def _get_all_connected_ips(self):
         connected = getattr(self.master_app, "connected_students", {})
@@ -412,21 +475,21 @@ class AdminDashboard(ctk.CTkToplevel):
         if not messagebox.askyesno("Confirm Sleep", f"Put {len(ips)} student PC(s) to sleep?"):
             return
         succeeded = sum(send_command(ip, "SLEEP") for ip in ips)
-        self.status_label.configure(text=f"Sleep sent to {succeeded}/{len(ips)} PC(s).", text_color="green")
+        self.status_label.configure(text=f"Sleep sent to {succeeded}/{len(ips)} PC(s).", text_color=COLORS["sky"])
 
     def restart_all(self):
         ips = self._get_all_connected_ips()
         if not messagebox.askyesno("Confirm Restart", f"Restart {len(ips)} student PC(s)? Their login will remain active."):
             return
         succeeded = sum(send_command(ip, "REBOOT") for ip in ips)
-        self.status_label.configure(text=f"Restart sent to {succeeded}/{len(ips)} PC(s).", text_color="green")
+        self.status_label.configure(text=f"Restart sent to {succeeded}/{len(ips)} PC(s).", text_color=COLORS["sky"])
 
     def shutdown_all(self):
         ips = self._get_all_connected_ips()
         if not messagebox.askyesno("Confirm Shutdown", f"Shutdown {len(ips)} student PC(s) and force logout?"):
             return
         succeeded = sum(send_command(ip, "SHUTDOWN") for ip in ips)
-        self.status_label.configure(text=f"Shutdown sent to {succeeded}/{len(ips)} PC(s).", text_color="green")
+        self.status_label.configure(text=f"Shutdown sent to {succeeded}/{len(ips)} PC(s).", text_color=COLORS["sky"])
 
     def add_inventory_item_ui(self):
         name = self.inv_item_name.get().strip()
@@ -438,11 +501,11 @@ class AdminDashboard(ctk.CTkToplevel):
 
         existing = [i for i in db.get_all_inventory_items() if i["name"].lower() == name.lower()]
         if existing:
-            self.inv_status_label.configure(text="Item already exists.", text_color="red")
+            self.inv_status_label.configure(text="Item already exists.", text_color=COLORS["danger"])
             return
 
         db.add_inventory_item(name, int(qty_str))
-        self.inv_status_label.configure(text=f"Added '{name}' (x{qty_str}).", text_color="green")
+        self.inv_status_label.configure(text=f"Added '{name}' (x{qty_str}).", text_color=COLORS["sky"])
         self.inv_item_name.delete(0, "end")
         self.inv_item_qty.delete(0, "end")
         self.refresh_inventory_ui()
@@ -459,11 +522,11 @@ class AdminDashboard(ctk.CTkToplevel):
 
         ok, err = db.borrow_item(item_id, borrower, int(qty_str))
         if ok:
-            self.inv_status_label.configure(text=f"'{borrower}' borrowed {qty_str}x {selected}.", text_color="green")
+            self.inv_status_label.configure(text=f"'{borrower}' borrowed {qty_str}x {selected}.", text_color=COLORS["sky"])
             self.inv_borrower_name.delete(0, "end")
             self.inv_borrow_qty.delete(0, "end")
         else:
-            self.inv_status_label.configure(text=err, text_color="red")
+            self.inv_status_label.configure(text=err, text_color=COLORS["danger"])
         self.refresh_inventory_ui()
 
     def return_item_ui(self, borrow_id):
@@ -499,7 +562,7 @@ class AdminDashboard(ctk.CTkToplevel):
             frm.pack(fill="x", padx=5, pady=4)
             text = f"{record['item_name']} x{record['quantity']} — {record['borrower_name']} (since {record['borrowed_at']})"
             ctk.CTkLabel(frm, text=text, anchor="w").pack(side="left", padx=10, pady=6, fill="x", expand=True)
-            ctk.CTkButton(frm, text="Mark Returned", fg_color="#1f6aa5", hover_color="#144870", width=110,
+            ctk.CTkButton(frm, text="Mark Returned", fg_color=COLORS["blue"], hover_color=COLORS["blue_hover"], width=110,
                         command=lambda bid=record["id"]: self.return_item_ui(bid)).pack(side="right", padx=10)
 
     def show_context_menu(self, event, ip, name, role="student"):

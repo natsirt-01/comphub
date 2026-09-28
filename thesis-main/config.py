@@ -1,25 +1,55 @@
 # config.py
 import customtkinter as ctk
+from tkinter import ttk
 
 COLORS = {
-    "navy": "#0b1f3a",
-    "navy_deep": "#071529",
-    "navy_panel": "#102b4c",
-    "blue": "#2878c8",
-    "blue_hover": "#1d5fa5",
-    "surface": "#f4f7fb",
-    "surface_alt": "#e7eef7",
-    "ink": "#102238",
-    "muted": "#64748b",
+    "navy": "#2b1745",
+    "navy_deep": "#1c102d",
+    "navy_panel": "#493064",
+    "blue": "#55b9e8",
+    "blue_hover": "#319dce",
+    "sky": "#55b9e8",
+    "pink": "#e76aa9",
+    "pink_hover": "#ca4e90",
+    "surface": "#fbf7fc",
+    "surface_alt": "#f0e8f5",
+    "ink": "#2e2340",
+    "muted": "#786b88",
     "white": "#ffffff",
-    "danger": "#c83c4a",
-    "warning": "#c58a16",
-    "success": "#238b68",
+    "danger": "#df4f92",
+    "warning": "#e77ab1",
+    "success": "#269fc4",
 }
 
 def apply_theme():
     ctk.set_appearance_mode("light")
     ctk.set_default_color_theme("blue")
+
+
+def apply_widget_theme(window):
+    style = ttk.Style(window)
+    style.theme_use("clam")
+    style.configure(
+        "Treeview",
+        background=COLORS["white"],
+        fieldbackground=COLORS["white"],
+        foreground=COLORS["ink"],
+        rowheight=30,
+        borderwidth=0,
+        font=("Segoe UI", 10),
+    )
+    style.configure(
+        "Treeview.Heading",
+        background=COLORS["navy_panel"],
+        foreground=COLORS["white"],
+        font=("Segoe UI", 10, "bold"),
+        relief="flat",
+    )
+    style.map(
+        "Treeview",
+        background=[("selected", COLORS["sky"])],
+        foreground=[("selected", COLORS["navy_deep"])],
+    )
 
 
 def maximize_window(window):

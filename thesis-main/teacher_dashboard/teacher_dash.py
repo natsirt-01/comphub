@@ -52,7 +52,7 @@ class TeacherDashboard(ctk.CTkToplevel):
         
         self.top_toolbar = ctk.CTkFrame(self, height=74, corner_radius=0, fg_color=COLORS["navy"])
         self.top_toolbar.pack(side="top", fill="x")
-        self.lab_status_label = ctk.CTkLabel(self, text=f"📍 Currently in: {lab_name}",
+        self.lab_status_label = ctk.CTkLabel(self, text=f"Currently in: {lab_name}",
                                             font=ctk.CTkFont(size=13, weight="bold"),
                                             text_color=COLORS["ink"])
         self.lab_status_label.pack(side="top", anchor="w", padx=28, pady=(14, 6))
@@ -115,13 +115,13 @@ class TeacherDashboard(ctk.CTkToplevel):
         if not self.is_broadcasting_demo:
             self.is_broadcasting_demo = True
             if self.share_screen_btn:
-                self.share_screen_btn.configure(text="Stop Sharing", fg_color="#a83232", hover_color="#c94444")
+                self.share_screen_btn.configure(text="Stop Sharing", fg_color=COLORS["pink"], hover_color=COLORS["pink_hover"])
             for ip in targets:
                 send_command(ip, "START_DEMO")
         else:
             self.is_broadcasting_demo = False
             if self.share_screen_btn:
-                self.share_screen_btn.configure(text="Share Screen", fg_color="#1f4068", hover_color="#162447")
+                self.share_screen_btn.configure(text="Share Screen", fg_color=COLORS["navy_panel"], hover_color=COLORS["blue_hover"])
             for ip in targets:
                 send_command(ip, "STOP_DEMO")
 
@@ -151,7 +151,7 @@ class TeacherDashboard(ctk.CTkToplevel):
             )
 
         ctk.CTkButton(dialog, text=f"Reset to '{db.DEFAULT_RESET_PASSWORD}'",
-                    fg_color="red", command=do_reset).pack(pady=15)
+                    fg_color=COLORS["danger"], hover_color=COLORS["pink_hover"], command=do_reset).pack(pady=15)
 
     def refresh_inbox_ui(self):
         if self.current_inbox_win and self.current_inbox_win.winfo_exists():
@@ -258,7 +258,7 @@ class TeacherDashboard(ctk.CTkToplevel):
         if not self.is_broadcasting_demo:
             self.is_broadcasting_demo = True
             if self.btn_fullscreen_demo:
-                self.btn_fullscreen_demo.configure(text="STOP", fg_color="#a83232", hover_color="#c94444")
+                self.btn_fullscreen_demo.configure(text="STOP", fg_color=COLORS["pink"], hover_color=COLORS["pink_hover"])
             
             for ip in self.student_cards.keys():
                 send_command(ip, "START_DEMO")

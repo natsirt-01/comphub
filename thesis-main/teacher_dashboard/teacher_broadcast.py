@@ -8,6 +8,7 @@ import cv2
 import pyautogui
 from .network_utils import send_command
 from network_config import BROADCAST_PORT
+from config import COLORS
 
 def toggle_teacher_broadcast(self):
     """Veyon-Style Realtime Broadcast Server (Optimized & Non-Blocking)"""
@@ -100,7 +101,7 @@ def toggle_teacher_broadcast(self):
     if not self.is_broadcasting_demo:
         self.is_broadcasting_demo = True
         if self.btn_fullscreen_demo:
-            self.btn_fullscreen_demo.configure(text="STOP", fg_color="#a83232", hover_color="#c94444")
+            self.btn_fullscreen_demo.configure(text="STOP", fg_color=COLORS["pink"], hover_color=COLORS["pink_hover"])
 
         for ip in self.student_cards.keys():
             send_command(ip, "START_DEMO")
@@ -111,7 +112,7 @@ def toggle_teacher_broadcast(self):
     else:
         self.is_broadcasting_demo = False
         if self.btn_fullscreen_demo:
-            self.btn_fullscreen_demo.configure(text="Fullscreen demo", fg_color="#383838", hover_color="#505050")
+            self.btn_fullscreen_demo.configure(text="Fullscreen demo", fg_color=COLORS["navy_panel"], hover_color=COLORS["blue_hover"])
 
         for ip in self.student_cards.keys():
             send_command(ip, "STOP_DEMO")

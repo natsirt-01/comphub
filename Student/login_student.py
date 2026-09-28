@@ -7,6 +7,7 @@ import webbrowser
 import struct
 import cv2
 import time
+import ctypes
 from datetime import datetime
 import numpy as np
 import tkinter as tk
@@ -382,7 +383,7 @@ class StudentDashboard(ctk.CTkToplevel):
         ctk.CTkLabel(tabview.tab("My Account"), text="Your lab session is active.",
                  text_color=COLORS["muted"]).pack(pady=4)
         ctk.CTkButton(tabview.tab("My Account"), text="Log Out", width=180, height=40,
-                  fg_color=COLORS["danger"], hover_color="#a92e3b", command=self.logout).pack(pady=28)
+                  fg_color=COLORS["danger"], hover_color=COLORS["pink_hover"], command=self.logout).pack(pady=28)
         history_date_row = ctk.CTkFrame(tabview.tab("History"), fg_color="transparent")
         history_date_row.pack(fill="x", padx=10, pady=(10, 0))
         self.history_start_date = ctk.CTkEntry(history_date_row, placeholder_text="From (YYYY-MM-DD)", width=150)
@@ -560,37 +561,46 @@ class LoginApp(ctk.CTk):
         threading.Thread(target=screen_sender.start_control_listener, daemon=True).start()
         threading.Thread(target=self.track_active_window, daemon=True).start()
         
-        header = ctk.CTkFrame(self, fg_color=COLORS["navy_panel"], corner_radius=0, height=100)
-        header.pack(fill="x", pady=(0, 36))
+        header = ctk.CTkFrame(self, fg_color=COLORS["navy_panel"], corner_radius=0, height=92)
+        header.pack(fill="x")
+        header.pack_propagate(False)
         ctk.CTkLabel(header, text="COMPHUB STUDENT", text_color=COLORS["white"],
                  font=ctk.CTkFont(size=25, weight="bold")).pack(anchor="w", padx=42, pady=(22, 0))
-        ctk.CTkLabel(header, text="Connect to your teacher and computer lab", text_color="#b9cbe0").pack(anchor="w", padx=44, pady=(2, 14))
+        ctk.CTkLabel(header, text="Connect to your teacher and computer lab", text_color="#e6d9f1").pack(anchor="w", padx=44, pady=(2, 14))
 
-        ctk.CTkLabel(self, text="Select Teacher", text_color=COLORS["ink"], font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=145)
+        login_panel = ctk.CTkFrame(self, width=520, height=520, corner_radius=14,
+                       fg_color=COLORS["white"], border_width=1,
+                       border_color=COLORS["surface_alt"])
+        login_panel.pack(expand=True, padx=24, pady=(22, 38))
+        login_panel.pack_propagate(False)
+        ctk.CTkLabel(login_panel, text="STUDENT SIGN IN", text_color=COLORS["navy"],
+                 font=ctk.CTkFont(size=21, weight="bold")).pack(anchor="w", padx=34, pady=(22, 12))
+
+        ctk.CTkLabel(login_panel, text="Select Teacher", text_color=COLORS["ink"], font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=36)
         self.teacher_map = {}
-        self.teacher_dropdown = ctk.CTkOptionMenu(self, values=["Loading..."], width=250)
-        self.teacher_dropdown.pack(pady=(5, 12), padx=145, fill="x")
+        self.teacher_dropdown = ctk.CTkOptionMenu(login_panel, values=["Loading..."], height=38)
+        self.teacher_dropdown.pack(pady=(5, 12), padx=34, fill="x")
 
-        ctk.CTkLabel(self, text="Select Computer Lab", text_color=COLORS["ink"], font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=145)
+        ctk.CTkLabel(login_panel, text="Select Computer Lab", text_color=COLORS["ink"], font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=36)
         self.lab_map = {}
-        self.lab_dropdown = ctk.CTkOptionMenu(self, values=["Loading..."], width=250)
-        self.lab_dropdown.pack(pady=(5, 15), padx=145, fill="x")
+        self.lab_dropdown = ctk.CTkOptionMenu(login_panel, values=["Loading..."], height=38)
+        self.lab_dropdown.pack(pady=(5, 12), padx=34, fill="x")
 
         self.after(100, self.fetch_teachers_and_labs)
 
-        self.user_entry = ctk.CTkEntry(self, placeholder_text="Username")
-        self.user_entry.pack(pady=7, padx=145, fill="x")
-        self.pass_entry = ctk.CTkEntry(self, placeholder_text="Password", show="*")
-        self.pass_entry.pack(pady=7, padx=145, fill="x")
+        self.user_entry = ctk.CTkEntry(login_panel, placeholder_text="Username", height=40)
+        self.user_entry.pack(pady=6, padx=34, fill="x")
+        self.pass_entry = ctk.CTkEntry(login_panel, placeholder_text="Password", show="*", height=40)
+        self.pass_entry.pack(pady=6, padx=34, fill="x")
 
-        ctk.CTkButton(self, text="Sign In", height=42, fg_color=COLORS["blue"],
-                  hover_color=COLORS["blue_hover"], command=self.check_login).pack(pady=20, padx=145, fill="x")
+        ctk.CTkButton(login_panel, text="Sign In", height=42, fg_color=COLORS["blue"],
+              hover_color=COLORS["blue_hover"], command=self.check_login).pack(pady=(16, 8), padx=34, fill="x")
         
-        self.error_label = ctk.CTkLabel(self, text="", text_color="red")
-        self.error_label.pack(pady=5)
+        self.error_label = ctk.CTkLabel(login_panel, text="", text_color=COLORS["danger"])
+        self.error_label.pack(pady=3)
         
-        ctk.CTkButton(self, text="Create an Account", fg_color="transparent", text_color=COLORS["blue"], 
-                      command=lambda: RegisterWindow(self, ADMIN_IP, LOG_PORT)).pack(pady=5)
+        ctk.CTkButton(login_panel, text="Create an Account", fg_color="transparent", text_color=COLORS["navy_panel"], 
+                  hover_color=COLORS["surface_alt"], command=lambda: RegisterWindow(self, ADMIN_IP, LOG_PORT)).pack(pady=3)
 
     def load_users(self):
         if os.path.exists(USER_FILE):
@@ -611,6 +621,9 @@ class LoginApp(ctk.CTk):
             try:
                 active_win = gw.getActiveWindow()
                 current_window = active_win.title.strip() if active_win and active_win.title else ""
+                warning = getattr(self, "restricted_warning", None)
+                if warning and warning.winfo_exists() and current_window == warning.title():
+                    current_window = last_restricted[0] if last_restricted else ""
                 username_val = "Student"
                 session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "active_session.json")
                 if os.path.exists(session_path):
@@ -732,6 +745,7 @@ class LoginApp(ctk.CTk):
     def show_restricted_warning(self, window_text, category):
         if hasattr(self, "restricted_warning") and self.restricted_warning and self.restricted_warning.winfo_exists():
             return
+        previous_foreground = ctypes.windll.user32.GetForegroundWindow() if hasattr(ctypes, "windll") else None
         warn = ctk.CTkToplevel(self)
         self.restricted_warning = warn
         warn.title("WARNING")
@@ -739,12 +753,28 @@ class LoginApp(ctk.CTk):
         warn.attributes("-topmost", True)
         warn.resizable(False, False)
         warn.overrideredirect(True)  # removes the title bar entirely, so there's nothing to grab and drag
-        warn.configure(fg_color="#8b0000")
-        ctk.CTkLabel(warn, text="⚠ RESTRICTED SITE DETECTED", font=("Arial", 18, "bold"), text_color="white").pack(pady=15)
-        ctk.CTkLabel(warn, text=f"Category: {category.upper()}", font=("Arial", 13, "bold"), text_color="yellow").pack()
+        warn.configure(fg_color=COLORS["danger"])
+        ctk.CTkLabel(warn, text="RESTRICTED SITE DETECTED", font=("Arial", 18, "bold"), text_color="white").pack(pady=15)
+        ctk.CTkLabel(warn, text=f"Category: {category.upper()}", font=("Arial", 13, "bold"), text_color=COLORS["sky"]).pack()
         ctk.CTkLabel(warn, text=window_text, font=("Arial", 11), text_color="white", wraplength=400).pack(pady=10)
         ctk.CTkLabel(warn, text="This activity has been reported to your teacher.", text_color="white").pack(pady=5)
         ctk.CTkLabel(warn, text="Close the restricted site to remove this warning.", text_color="white").pack(pady=10)
+        warn.after(0, self._set_warning_no_activate, warn, previous_foreground)
+
+    @staticmethod
+    def _set_warning_no_activate(warning, previous_foreground=None):
+        if not hasattr(ctypes, "windll") or not warning.winfo_exists():
+            return
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = warning.winfo_id()
+            extended_style = user32.GetWindowLongW(hwnd, -20)
+            user32.SetWindowLongW(hwnd, -20, extended_style | 0x08000000)
+            user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0033)
+            if previous_foreground:
+                user32.SetForegroundWindow(previous_foreground)
+        except (AttributeError, OSError):
+            pass
 
     def clear_restricted_warning(self):
         warning = getattr(self, "restricted_warning", None)

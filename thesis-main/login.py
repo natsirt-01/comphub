@@ -9,7 +9,7 @@ import time
 import cv2
 import numpy as np
 import pyautogui
-from config import apply_theme, COLORS, maximize_window
+from config import apply_theme, apply_widget_theme, COLORS, maximize_window
 from teacher_dashboard.teacher_dash import TeacherDashboard
 from teacher_dashboard.network_listeners import handle_student_expression
 from teacher_dashboard.network_listeners import start_persistent_stream_listeners, update_student_card_name
@@ -52,6 +52,7 @@ class LabSelectionDialog(ctk.CTkToplevel):
 class LoginApp(ctk.CTk):
     def __init__(self):
         super().__init__()
+        apply_widget_theme(self)
         db.init_db()
         db.seed_defaults()
         
@@ -80,25 +81,33 @@ class LoginApp(ctk.CTk):
         threading.Thread(target=self.start_log_listener, daemon=True).start()
         threading.Thread(target=self.broadcast_stream_server, daemon=True).start()
         
-        header = ctk.CTkFrame(self, fg_color=COLORS["navy_panel"], corner_radius=0, height=86)
-        header.pack(fill="x", padx=0, pady=(0, 36))
+        header = ctk.CTkFrame(self, fg_color=COLORS["navy_panel"], corner_radius=0, height=82)
+        header.pack(fill="x")
+        header.pack_propagate(False)
         ctk.CTkLabel(header, text="COMPHUB", text_color=COLORS["white"],
-                 font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w", padx=34, pady=(18, 0))
-        ctk.CTkLabel(header, text="Teacher and administrator workspace", text_color="#b9cbe0",
-                 font=ctk.CTkFont(size=12)).pack(anchor="w", padx=36, pady=(2, 12))
+             font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w", padx=34, pady=(13, 0))
+        ctk.CTkLabel(header, text="Teacher and administrator workspace", text_color="#e6d9f1",
+             font=ctk.CTkFont(size=12)).pack(anchor="w", padx=36, pady=(0, 10))
 
-        ctk.CTkLabel(self, text="Sign in to continue", text_color=COLORS["ink"],
-                 font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", padx=120, pady=(0, 18))
+        login_panel = ctk.CTkFrame(self, width=440, height=390, corner_radius=14,
+                       fg_color=COLORS["white"], border_width=1,
+                       border_color=COLORS["surface_alt"])
+        login_panel.pack(expand=True, padx=24, pady=(24, 42))
+        login_panel.pack_propagate(False)
+        ctk.CTkLabel(login_panel, text="SIGN IN", text_color=COLORS["navy"],
+             font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w", padx=38, pady=(32, 4))
+        ctk.CTkLabel(login_panel, text="Access the lab workspace", text_color=COLORS["muted"],
+             font=ctk.CTkFont(size=12)).pack(anchor="w", padx=40, pady=(0, 18))
 
-        self.user_entry = ctk.CTkEntry(self, placeholder_text="Username")
-        self.user_entry.pack(pady=7, ipady=4)
-        self.pass_entry = ctk.CTkEntry(self, placeholder_text="Password", show="*")
-        self.pass_entry.pack(pady=7, ipady=4)
-        self.btn_login = ctk.CTkButton(self, text="Sign In", height=42, fg_color=COLORS["blue"],
+        self.user_entry = ctk.CTkEntry(login_panel, placeholder_text="Username", height=42)
+        self.user_entry.pack(pady=7, padx=38, fill="x")
+        self.pass_entry = ctk.CTkEntry(login_panel, placeholder_text="Password", show="*", height=42)
+        self.pass_entry.pack(pady=7, padx=38, fill="x")
+        self.btn_login = ctk.CTkButton(login_panel, text="Sign In", height=42, fg_color=COLORS["blue"],
                            hover_color=COLORS["blue_hover"], command=self.check_login)
-        self.btn_login.pack(pady=24, padx=120, fill="x")
-        self.error_label = ctk.CTkLabel(self, text="", text_color=COLORS["danger"])
-        self.error_label.pack()
+        self.btn_login.pack(pady=(18, 8), padx=38, fill="x")
+        self.error_label = ctk.CTkLabel(login_panel, text="", text_color=COLORS["danger"])
+        self.error_label.pack(pady=(0, 4))
 
     def start_log_listener(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

@@ -3,6 +3,7 @@ import socket
 import json
 from network_config import ADMIN_IP, LOG_PORT
 from ui_utils import center_window
+from config import COLORS
 
 
 def _send_request(payload, expect_response=True):
@@ -50,9 +51,9 @@ def open_account_approvals(master_teacher):
             label_text = f"{acc['full_name']} ({acc['username']}) — {acc['course_section']}"
             ctk.CTkLabel(frm, text=label_text, font=("Arial", 12)).pack(side="left", padx=10)
 
-            ctk.CTkButton(frm, text="Decline", fg_color="red", width=80,
+            ctk.CTkButton(frm, text="Decline", fg_color=COLORS["danger"], hover_color=COLORS["pink_hover"], width=80,
                           command=lambda uid=acc["id"]: update_status(uid, "declined")).pack(side="right", padx=5)
-            ctk.CTkButton(frm, text="Accept", fg_color="green", width=80,
+            ctk.CTkButton(frm, text="Accept", fg_color=COLORS["sky"], hover_color=COLORS["blue_hover"], width=80,
                           command=lambda uid=acc["id"]: update_status(uid, "approved")).pack(side="right", padx=5)
 
         accepted = _send_request(f"ACTION: GET_TEACHER_STUDENTS | TEACHERID: {teacher_id} | STATUS: approved") or []
@@ -60,20 +61,21 @@ def open_account_approvals(master_teacher):
             frm = ctk.CTkFrame(tab_accepted)
             frm.pack(fill="x", padx=10, pady=5)
             ctk.CTkLabel(frm, text=f"{acc['full_name']} ({acc['username']}) (Approved)",
-                         text_color="green", font=("Arial", 12)).pack(side="left", padx=10)
+                         text_color=COLORS["sky"], font=("Arial", 12)).pack(side="left", padx=10)
 
         declined = _send_request(f"ACTION: GET_TEACHER_STUDENTS | TEACHERID: {teacher_id} | STATUS: declined") or []
         for acc in declined:
             frm = ctk.CTkFrame(tab_declined)
             frm.pack(fill="x", padx=10, pady=5)
             ctk.CTkLabel(frm, text=f"{acc['full_name']} ({acc['username']}) (Rejected)",
-                         text_color="red", font=("Arial", 12)).pack(side="left", padx=10)
+                         text_color=COLORS["danger"], font=("Arial", 12)).pack(side="left", padx=10)
 
     def update_status(user_id, new_status):
         action = "APPROVE_STUDENT" if new_status == "approved" else "DECLINE_STUDENT"
         _send_request(f"ACTION: {action} | USERID: {user_id}", expect_response=False)
         load_data()
 
-    ctk.CTkButton(window, text="Refresh List", fg_color="#1f6aa5", command=load_data).pack(pady=10)
+    ctk.CTkButton(window, text="Refresh List", fg_color=COLORS["blue"],
+                  hover_color=COLORS["blue_hover"], command=load_data).pack(pady=10)
 
     load_data()

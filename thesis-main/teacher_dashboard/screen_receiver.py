@@ -5,6 +5,7 @@ import socket
 from datetime import datetime
 from PIL import Image, ImageTk, ImageFile
 from .network_utils import send_control_command
+from config import COLORS
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -31,18 +32,18 @@ class ScreenViewer(ctk.CTkToplevel):
         self.label.grid(row=0, column=0, sticky="nsew")
         
         # --- TOP CONTROLS OVERLAY ---
-        self.top_control_frame = ctk.CTkFrame(self, fg_color="#1f1f1f", corner_radius=8, border_width=1, border_color="#383838")
+        self.top_control_frame = ctk.CTkFrame(self, fg_color=COLORS["navy"], corner_radius=8, border_width=1, border_color=COLORS["navy_panel"])
         self.top_control_frame.place(relx=0.97, rely=0.03, anchor="ne")
 
         self.btn_screenshot = ctk.CTkButton(
             self.top_control_frame, text="Screenshot", width=90, height=30,
-            fg_color="#383838", hover_color="#505050", command=self.take_screenshot
+            fg_color=COLORS["blue"], hover_color=COLORS["blue_hover"], command=self.take_screenshot
         )
         self.btn_screenshot.pack(side="left", padx=6, pady=6)
        
         self.btn_exit = ctk.CTkButton(
             self.top_control_frame, text="Exit", width=70, height=30,
-            fg_color="#A83232", hover_color="#C84242", command=self.on_closing
+            fg_color=COLORS["pink"], hover_color=COLORS["pink_hover"], command=self.on_closing
         )
         self.btn_exit.pack(side="left", padx=(0, 6), pady=6)
        

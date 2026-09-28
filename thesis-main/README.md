@@ -5,10 +5,12 @@ CompHub is a Windows lab-monitoring system with Admin/Teacher and Student applic
 ## Accounts and Monitoring
 
 - Admin creates teacher accounts, renames accounts, resets student passwords, manages labs and inventory, and adds or removes restricted-site keywords under **Blocking Rules**.
+- Admin can register IPv4 addresses as **Student** or **Teacher** under **IP Management**. Registration is saved locally and applies to active streams immediately; removing it restores the role announced by that app.
 - Students submit account registrations; Teachers approve or decline requests in **Account Approvals**.
 - Students can change their own display name after verifying their current password, and can update their password in **Settings**.
 - Teacher monitoring displays students assigned to the selected lab. Admin monitoring displays connected students and teachers. Lab Monitoring shows passive occupancy cards and refreshes every five seconds; right-clicking those cards does not issue commands.
 - Student clients download blocking rules at startup and refresh them every 30 seconds.
+- The restricted-site warning stays visible without stealing keyboard focus and disappears when the active window leaves the restricted match; it reappears when the student returns to one.
 - Admin session history, Teacher history, Student history, and the Teacher activity inbox accept inclusive `YYYY-MM-DD` start/end filters.
 
 ## Install Wizard

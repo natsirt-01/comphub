@@ -6,7 +6,7 @@ from PIL import Image, ImageTk
 
 import socket as _socket
 import json as _json
-from network_config import TEACHER_IP, ADMIN_IP, LOG_PORT
+from network_config import TEACHER_IP, ADMIN_IP, LOG_PORT, get_registered_ip_role
 
 
 def _get_user_info(username, is_admin_context):
@@ -61,6 +61,8 @@ def update_student_card_name(self, username, ip, role="student"):
     teachers alike."""
     from .student_cards import create_student_card, build_card_label
 
+    role = get_registered_ip_role(ip) or role
+
     dashboard_check = getattr(self, "active_teacher_dashboard", None)
     is_admin_context = getattr(dashboard_check, "is_admin_monitor", False)
 
@@ -82,6 +84,8 @@ def update_student_card_name(self, username, ip, role="student"):
 
     if not hasattr(self, "entity_roles"):
         self.entity_roles = {}
+    if not hasattr(self, "handshake_roles"):
+        self.handshake_roles = {}
     self.entity_roles[ip] = role
 
     dashboard = getattr(self, "active_teacher_dashboard", None)
@@ -94,6 +98,12 @@ def update_student_card_name(self, username, ip, role="student"):
         # This is a Teacher dashboard: never show other teachers, and only
         # show students who match this teacher's currently selected lab.
         if role == "teacher":
+            if ip in dashboard.student_cards:
+                card_info = dashboard.student_cards.pop(ip)
+                try:
+                    card_info["frame"].destroy()
+                except Exception:
+                    pass
             return
         teacher_lab_id = getattr(self, "current_teacher_lab_id", None)
         user = _get_user_info(username, is_admin_context)
@@ -117,6 +127,7 @@ def update_student_card_name(self, username, ip, role="student"):
         card_info = dashboard.student_cards[ip]
         card_info["pc_number"] = pc_number
         card_info["full_name"] = full_name
+        card_info["role"] = role
         new_label = build_card_label(pc_number, full_name, card_info["expression"], role)
         if "info_label" in card_info and card_info["info_label"].winfo_exists():
             card_info["info_label"].configure(text=new_label)
@@ -279,6 +290,7 @@ def start_persistent_stream_listeners(self):
             username, role = _parse_handshake(raw_user_info, student_ip)
         except Exception:
             conn.settimeout(None)
+        self.handshake_roles[student_ip] = role
 
         if hasattr(self, 'after'):
             self.after(0, lambda u=username, ip=student_ip, r=role: update_student_card_name(self, u, ip, r))
@@ -310,6 +322,7 @@ def start_persistent_stream_listeners(self):
             conn.close()
             if student_ip in self.connected_students:
                 del self.connected_students[student_ip]
+            self.handshake_roles.pop(student_ip, None)
 
             def remove_card_ui():
                 dashboard = getattr(self, "active_teacher_dashboard", None)

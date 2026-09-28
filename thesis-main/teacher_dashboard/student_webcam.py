@@ -5,6 +5,7 @@ import threading
 import time
 import socket
 from deepface import DeepFace
+from config import COLORS
 
 class StudentWebcamOverlay(ctk.CTkToplevel):
     def __init__(self, master=None, username="Student", teacher_ip="192.168.100.71", log_port=5001):
@@ -46,13 +47,13 @@ class StudentWebcamOverlay(ctk.CTkToplevel):
         self.video_label.bind("<B1-Motion>", self.do_move)
 
         # --- FLOATING CONTROL BUTTONS ---
-        self.btn_frame = ctk.CTkFrame(self, fg_color="#222222", corner_radius=4)
+        self.btn_frame = ctk.CTkFrame(self, fg_color=COLORS["navy_panel"], corner_radius=4)
         self.update_buttons_layout()
 
-        self.min_btn = ctk.CTkButton(self.btn_frame, text="_", width=20, height=18, font=("Arial", 10, "bold"), fg_color="transparent", hover_color="#444444", command=self.toggle_minimize)
+        self.min_btn = ctk.CTkButton(self.btn_frame, text="_", width=20, height=18, font=("Arial", 10, "bold"), fg_color="transparent", hover_color=COLORS["blue_hover"], command=self.toggle_minimize)
         self.min_btn.pack(side="left", padx=1, pady=1)
         
-        self.full_btn = ctk.CTkButton(self.btn_frame, text="□", width=20, height=18, font=("Arial", 10, "bold"), fg_color="transparent", hover_color="#444444", command=self.toggle_fullscreen)
+        self.full_btn = ctk.CTkButton(self.btn_frame, text="□", width=20, height=18, font=("Arial", 10, "bold"), fg_color="transparent", hover_color=COLORS["pink_hover"], command=self.toggle_fullscreen)
         self.full_btn.pack(side="left", padx=1, pady=1)
 
         self.cap = cv2.VideoCapture(0)

@@ -1,15 +1,20 @@
 import customtkinter as ctk
 
 COLORS = {
-    "navy": "#0b1f3a",
-    "navy_panel": "#102b4c",
-    "blue": "#2878c8",
-    "blue_hover": "#1d5fa5",
-    "surface": "#f4f7fb",
-    "ink": "#102238",
-    "muted": "#64748b",
+    "navy": "#2b1745",
+    "navy_panel": "#493064",
+    "blue": "#55b9e8",
+    "blue_hover": "#319dce",
+    "sky": "#55b9e8",
+    "pink": "#e76aa9",
+    "pink_hover": "#ca4e90",
+    "surface": "#fbf7fc",
+    "surface_alt": "#f0e8f5",
+    "ink": "#2e2340",
+    "muted": "#786b88",
     "white": "#ffffff",
-    "danger": "#c83c4a",
+    "danger": "#df4f92",
+    "success": "#269fc4",
 }
 
 

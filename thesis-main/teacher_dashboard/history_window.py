@@ -60,7 +60,7 @@ def open_history_window(master, login_history_data=None):
         try:
             start, end = parse_date_range(start_entry.get(), end_entry.get())
         except ValueError as error:
-            status.configure(text=str(error), text_color="red")
+            status.configure(text=str(error), text_color=COLORS["danger"])
             return
         history = [item for item in history
                    if matches_date_range(item.get("login_time"), start, end)]

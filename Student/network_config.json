@@ -1,6 +1,6 @@
 {
-    "teacher_ip": "192.168.100.11",
-    "admin_ip": "192.168.100.9",
+    "teacher_ip": "192.168.100.71",
+    "admin_ip": "192.168.100.251",
     "log_port": 5001,
     "listener_port": 5050,
     "broadcast_port": 9996,
