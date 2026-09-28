@@ -6,9 +6,22 @@ import time
 import pyautogui
 import os
 import json
+import threading
 from network_config import get_admin_ip
 
 pyautogui.FAILSAFE = False
+_last_stream_errors = {}
+_stream_error_lock = threading.Lock()
+
+
+def _log_stream_error(target_ip, target_port, error):
+    key = (target_ip, target_port, str(error))
+    now = time.monotonic()
+    with _stream_error_lock:
+        if now - _last_stream_errors.get(key, 0) < 10:
+            return
+        _last_stream_errors[key] = now
+    print(f"[screen stream] {target_ip}:{target_port} failed: {error}")
 
 def get_current_username():
     try:
@@ -67,17 +80,19 @@ def start_live_monitoring(target_ip, follow_admin=False):
         if not username:
             time.sleep(2)
             continue
-        discovered_admin = get_admin_ip(timeout=1.0)
-        if not discovered_admin:
-            time.sleep(2)
-            continue
         if follow_admin:
-            target_ip = discovered_admin
+            target_ip = get_admin_ip(timeout=1.0)
+            if not target_ip:
+                _log_stream_error("Admin discovery", 37020, "Admin not found on this LAN")
+                time.sleep(2)
+                continue
             
         try:
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            client.settimeout(5)
             client.connect((target_ip, 9997))
+            client.settimeout(None)
             
             with mss.mss() as sct:
                 monitor = sct.monitors[1]
@@ -100,7 +115,8 @@ def start_live_monitoring(target_ip, follow_admin=False):
                     
                     client.sendall(len(data).to_bytes(4, byteorder='big') + data)
                     time.sleep(0.06) # ~15 FPS limit para sa monitoring
-        except Exception:
+        except Exception as error:
+            _log_stream_error(target_ip, 9997, error)
             time.sleep(2)
 
 def stream_to_target(target_ip, target_port, follow_admin=False):
@@ -110,17 +126,20 @@ def stream_to_target(target_ip, target_port, follow_admin=False):
         if not username:
             time.sleep(2)
             continue
-        discovered_admin = get_admin_ip(timeout=1.0)
-        if not discovered_admin:
-            time.sleep(2)
-            continue
         if follow_admin:
-            target_ip = discovered_admin
+            target_ip = get_admin_ip(timeout=1.0)
+            if not target_ip:
+                _log_stream_error("Admin discovery", 37020, "Admin not found on this LAN")
+                time.sleep(2)
+                continue
             
         try:
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            client.settimeout(5)
             client.connect((target_ip, target_port))
+            client.settimeout(None)
+            print(f"[screen stream] Connected to {target_ip}:{target_port}")
             
             name_msg = f"NAME: {username}|ROLE:student\n"
             client.sendall(name_msg.encode('utf-8'))
@@ -142,7 +161,8 @@ def stream_to_target(target_ip, target_port, follow_admin=False):
                     
                     client.sendall(len(data).to_bytes(4, byteorder='big') + data)
                     time.sleep(0.04) # ~25 FPS limit
-        except Exception as e:
+        except Exception as error:
+            _log_stream_error(target_ip, target_port, error)
             time.sleep(2)
 
 def start_stream(teacher_ip):

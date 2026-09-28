@@ -178,8 +178,13 @@ def hydrate_dashboard(self, dashboard):
 def update_thumbnail_frame_for(dashboard, ip, img_tk):
     if ip in dashboard.student_cards:
         lbl = dashboard.student_cards[ip]["preview"]
-        lbl.configure(image=img_tk, text="")
-        lbl.image = img_tk
+        try:
+            if not lbl.winfo_exists():
+                return
+            lbl.configure(image=img_tk, text="")
+            lbl.image = img_tk
+        except Exception as error:
+            print(f"[monitor stream] Could not render preview for {ip}: {error}")
 
 
 def update_thumbnail_frame(self, ip, image, source_conn=None):
@@ -188,7 +193,12 @@ def update_thumbnail_frame(self, ip, image, source_conn=None):
     img_tk = ImageTk.PhotoImage(image)
     if not hasattr(self, "latest_frames"):
         self.latest_frames = {}
+    if not hasattr(self, "stream_frame_seen"):
+        self.stream_frame_seen = set()
     self.latest_frames[ip] = img_tk
+    if ip not in self.stream_frame_seen:
+        self.stream_frame_seen.add(ip)
+        print(f"[monitor stream] First frame received from {ip}")
 
     dashboard = getattr(self, "active_teacher_dashboard", None)
     if dashboard is not None:
@@ -298,6 +308,8 @@ def start_persistent_stream_listeners(self):
         self.student_display_names = {}
     if not hasattr(self, "latest_frames"):
         self.latest_frames = {}
+    if not hasattr(self, "stream_frame_seen"):
+        self.stream_frame_seen = set()
     if not hasattr(self, "student_expressions"):
         self.student_expressions = {}
     if not hasattr(self, "login_history_data"):
@@ -325,6 +337,7 @@ def start_persistent_stream_listeners(self):
         except Exception:
             conn.settimeout(None)
         self.handshake_roles[student_ip] = role
+        print(f"[monitor stream] Accepted {role} '{username}' from {student_ip} on TCP 9998")
 
         if hasattr(self, 'after'):
             self.after(0, lambda u=username, ip=student_ip, r=role: update_student_card_name(self, u, ip, r))
@@ -357,6 +370,7 @@ def start_persistent_stream_listeners(self):
                 del self.connected_students[student_ip]
                 self.handshake_roles.pop(student_ip, None)
                 self.latest_frames.pop(student_ip, None)
+                self.stream_frame_seen.discard(student_ip)
 
             def remove_card_ui():
                 if not is_current_connection:
