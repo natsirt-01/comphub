@@ -1,0 +1,24 @@
+# Virtual environments
+venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Databases (contains real student data + password hashes)
+*.db
+*.sqlite
+*.sqlite3
+
+# Local session/config files
+active_session.json
+active_students.json
+
+# Editor/IDE
+.vscode/
+*.pyc
+
+# OS junk
+Thumbs.db
+.DS_Store

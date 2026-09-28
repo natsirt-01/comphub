@@ -1,0 +1,14 @@
+py -3.11 -m venv venv
+venv\Scripts\activate
+python --version
+
+pip install customtkinter pillow opencv-python numpy pyautogui mss deepface pygetwindow
+pip freeze > requirements.txt   
+python login_student.py
+pip install tf-keras
+
+
+pip install -r requirements.txt
+python -m venv venv
+venv\Scripts\activate
+pip install customtkinter opencv-python numpy pyautogui pillow mss deepface tensorflow

@@ -1,0 +1,1178 @@
+client_listener.py
+import socket
+import threading
+import subprocess
+import os
+import sys
+import io
+import struct
+from PIL import Image, ImageTk
+import customtkinter as ctk
+
+# --- DEMO VIEWER CLASS PARA SA STUDENT ---
+class DemoViewer(ctk.CTkToplevel):
+    def __init__(self, master=None):
+        super().__init__(master)
+        self.title("Teacher Fullscreen Demo - Live")
+        self.attributes("-fullscreen", True)
+        self.attributes("-topmost", True)
+        
+        self.video_label = ctk.CTkLabel(self, text="Naghihintay sa screen ng Teacher...", fg_color="black", text_color="white")
+        self.video_label.pack(fill="both", expand=True)
+        
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.bind("<Escape>", lambda e: self.on_close())
+
+    def update_frame(self, data):
+        try:
+            image = Image.open(io.BytesIO(data))
+
+            new_w = self.winfo_width()
+            new_h = self.winfo_height()
+            if new_w > 10 and new_h > 10:
+                image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+            # Paggamit ng CTkImage para mawala ang HighDPI warning
+            ctk_img = ctk.CTkImage(light_image=image, dark_image=image, size=(new_w if new_w > 10 else 800, new_h if new_h > 10 else 600))
+
+            self.video_label.configure(image=ctk_img, text="")
+            self.video_label.image = ctk_img
+        except Exception as e:
+            print(f"Error sa pag-render ng demo frame: {e}")
+
+    def on_close(self):
+        # I-withdraw muna sa halip na i-destroy para laging handa ang window
+        try:
+            self.withdraw()
+        except:
+            pass
+
+
+# --- MAIN CLIENT COMMAND LISTENER ---
+class ClientListener:
+    def __init__(self, root_window=None):
+        self.root_window = root_window
+        self.is_running = True
+        self.demo_window = None
+        
+        # 1. Simulan ang command listener sa Port 5000
+        threading.Thread(target=self.start_listening, daemon=True).start()
+        
+        # 2. Simulan ang permanenteng broadcast listener sa Port 9996
+        threading.Thread(target=self.start_broadcast_listener, daemon=True).start()
+
+    def start_broadcast_listener(self):
+        HOST = '0.0.0.0'
+        PORT = 9996  # Port para sa Teacher Demo Broadcast
+        
+        server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            server_sock.bind((HOST, PORT))
+            server_sock.listen(5)
+            print(f"[CLIENT] Nakikinig ang demo broadcast sa port {PORT}...")
+        except Exception as e:
+            print(f"Demo viewer bind error: {e}")
+            return
+
+        while self.is_running:
+            try:
+                server_sock.settimeout(1.0)
+                try:
+                    conn, addr = server_sock.accept()
+                except socket.timeout:
+                    continue
+                
+                with conn:
+                    header = conn.recv(4)
+                    if not header:
+                        continue
+                    frame_length = struct.unpack("!I", header)[0]
+                    
+                    data = bytearray()
+                    while len(data) < frame_length:
+                        packet = conn.recv(frame_length - len(data))
+                        if not packet:
+                            break
+                        data.extend(packet)
+                    
+                    if len(data) == frame_length:
+                        # Kung bukas at visible ang demo window, ipasa ang frame
+                        if self.demo_window and self.demo_window.winfo_exists():
+                            if self.root_window:
+                                self.root_window.after(0, lambda d=data: self.demo_window.update_frame(d))
+            except Exception as e:
+                print(f"Broadcast receive error: {e}")
+                
+        server_sock.close()
+
+    def start_listening(self):
+        HOST = '0.0.0.0'
+        PORT = 5000  # Port kung saan tumatanggap ang student ng mga utos mula sa teacher
+        
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        try:
+            server.bind((HOST, PORT))
+            server.listen(5)
+            print(f"[CLIENT] Nakikinig ang student command listener sa port {PORT}...")
+        except Exception as e:
+            print(f"[CLIENT ERROR] Hindi ma-bind ang port {PORT}: {e}")
+            return
+
+        while self.is_running:
+            try:
+                server.settimeout(1.0)
+                try:
+                    conn, addr = server.accept()
+                except socket.timeout:
+                    continue
+                
+                with conn:
+                    data = conn.recv(1024)
+                    if not data:
+                        continue
+                    
+                    command = data.decode('utf-8').strip()
+                    print(f"[CLIENT] Natanggap na utos: {command}")
+                    
+                    self.handle_command(command)
+            except Exception as e:
+                print(f"[CLIENT ERROR] Loop error: {e}")
+
+    def handle_command(self, command):
+        if command == "START_DEMO":
+            if self.root_window:
+                self.root_window.after(0, self.open_demo_viewer)
+            else:
+                if not self.demo_window or not self.demo_window.winfo_exists():
+                    self.demo_window = DemoViewer()
+
+        elif command == "STOP_DEMO":
+            if self.demo_window and self.demo_window.winfo_exists():
+                if self.root_window:
+                    self.root_window.after(0, lambda: self.demo_window.withdraw())
+                else:
+                    self.demo_window.withdraw()
+
+        elif command == "LOCK":
+            print("[CLIENT] PC Locked")
+        elif command == "UNLOCK":
+            print("[CLIENT] PC Unlocked")
+        elif command.startswith("MSG:"):
+            msg_content = command.split(":", 1)[1]
+            print(f"[CLIENT] Mensahe mula kay Teacher: {msg_content}")
+        elif command.startswith("URL:"):
+            url_content = command.split(":", 1)[1]
+            import webbrowser
+            webbrowser.open(url_content)
+
+    def open_demo_viewer(self):
+        if not self.demo_window or not self.demo_window.winfo_exists():
+            self.demo_window = DemoViewer(self.root_window)
+        else:
+            self.demo_window.deiconify()  # Ipakita ulit kung naka-withdraw
+
+# Para mapagana ito kapag direktang ni-run ang file na ito:
+if __name__ == "__main__":
+    app = ctk.CTk()
+    app.title("Student Workstation")
+    app.geometry("400x300")
+    
+    ctk.CTkLabel(app, text="Student Client Running...", font=("Arial", 14, "bold")).pack(expand=True)
+    
+    listener = ClientListener(app)
+    
+    app.mainloop()
+client_side.py
+import datetime
+import socket
+import threading
+import time
+import customtkinter as ctk
+from screen_sender import start_stream
+import pygetwindow as gw
+
+# Configuration - Palitan ng tamang IP address ng Teacher PC
+TEACHER_IP = "192.168.100.71"
+LOG_PORT = 5001
+LISTENER_PORT = 5000
+
+
+class LoginWindow(ctk.CTk):
+
+  def __init__(self, callback):
+    super().__init__()
+    self.callback = callback
+    self.title("Student Login")
+    self.attributes("-fullscreen", True)
+    self.attributes("-topmost", True)
+
+    # UI Elements
+    ctk.CTkLabel(self, text="STUDENT LOGIN", font=("Arial", 40)).pack(
+        pady=100
+    )
+    self.user_entry = ctk.CTkEntry(
+        self, placeholder_text="Username", width=300
+    )
+    self.user_entry.pack(pady=20)
+
+    ctk.CTkButton(
+        self, text="LOGIN", command=self.attempt_login, width=300
+    ).pack(pady=20)
+
+  def attempt_login(self):
+    user = self.user_entry.get()
+    if user:
+      try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((TEACHER_IP, LOG_PORT))
+        msg = f"ACTION: LOGIN | USER: {user} | PC: {socket.gethostname()} | TIME: {datetime.datetime.now().strftime('%H:%M:%S')}"
+        s.sendall(msg.encode())
+        s.close()
+      except Exception as e:
+        print(f"Cannot connect to Teacher for logging: {e}")
+
+      self.withdraw()
+      self.callback(user)
+
+
+class ClientApp(ctk.CTk):
+
+  def __init__(self, username):
+    super().__init__()
+    self.username = username
+    self.title(f"Student Terminal - {username}")
+    self.geometry("300x200")
+    self.lock_window = None
+
+    ctk.CTkLabel(
+        self, text=f"Welcome, {username}\nSystem Online", font=("Arial", 14)
+    ).pack(pady=40)
+
+    # Simulan ang screen streaming patungo sa Teacher PC
+    threading.Thread(
+        target=start_stream, args=(TEACHER_IP,), daemon=True
+    ).start()
+
+    # Simulan ang background listener para sa mga utos ng Teacher
+    threading.Thread(target=self.start_listener, daemon=True).start()
+
+    # Simulan ang active window tracker para sa Teacher's Inbox (Tiyaking may ACTIVITY: prefix)
+    threading.Thread(target=self.track_active_window, daemon=True).start()
+
+  def track_active_window(self):
+    last_window = ""
+    while True:
+      try:
+        active_win = gw.getActiveWindow()
+        if active_win and active_win.title:
+          current_window = active_win.title
+          if current_window != last_window and current_window.strip() != "":
+            last_window = current_window
+
+            # Eksaktong format na may ACTIVITY: para masalo ng network listener sa port 5001
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect((TEACHER_IP, LOG_PORT))
+            message = f"ACTIVITY: {socket.gethostname()} ({self.username}) - {current_window}"
+            s.sendall(message.encode("utf-8"))
+            s.close()
+            print(f"[DEBUG STUDENT] Na-send na sa Teacher: {message}")
+      except Exception as e:
+        print(f"[DEBUG STUDENT] Track error: {e}")
+      time.sleep(3)
+
+  def start_listener(self):
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("0.0.0.0", LISTENER_PORT))
+    server.listen(5)
+    print("Client Listener is running...")
+
+    while True:
+      try:
+        conn, addr = server.accept()
+        command = conn.recv(1024).decode().strip()
+
+        if command == "LOCK":
+          self.after(0, self.show_lock)
+        elif command == "UNLOCK":
+          self.after(0, self.hide_lock)
+        elif command.startswith("MSG:"):
+          msg_content = command.replace("MSG:", "", 1)
+          self.after(0, lambda: self.show_teacher_message(msg_content))
+
+        conn.close()
+      except Exception as e:
+        print(f"Listener error: {e}")
+
+  def show_teacher_message(self, message):
+    msg_win = ctk.CTkToplevel(self)
+    msg_win.title("Mensahe mula sa Guro")
+    msg_win.geometry("400x200")
+    msg_win.attributes("-topmost", True)
+    msg_win.grab_set()
+
+    ctk.CTkLabel(
+        msg_win,
+        text="📢 ANUNSYO MULA SA GURO",
+        font=("Arial", 14, "bold"),
+        text_color="#1f6aa5",
+    ).pack(pady=15)
+
+    txt_box = ctk.CTkTextbox(msg_win, width=350, height=80)
+    txt_box.insert("1.0", message)
+    txt_box.configure(state="disabled")
+    txt_box.pack(pady=5)
+
+    ctk.CTkButton(msg_win, text="OK", command=msg_win.destroy).pack(pady=15)
+
+  def show_lock(self):
+    if not self.lock_window:
+      self.lock_window = ctk.CTkToplevel(self)
+      self.lock_window.attributes("-fullscreen", True)
+      self.lock_window.attributes("-topmost", True)
+      ctk.CTkLabel(
+          self.lock_window,
+          text="TERMINAL LOCKED",
+          font=("Arial", 80, "bold"),
+          text_color="red",
+      ).pack(expand=True)
+
+  def hide_lock(self):
+    if self.lock_window:
+      self.lock_window.destroy()
+      self.lock_window = None
+
+
+if __name__ == "__main__":
+
+  def run_app(username):
+    app = ClientApp(username=username)
+    app.mainloop()
+
+  login = LoginWindow(callback=run_app)
+  login.mainloop()
+config.json
+{
+    "teacher_ip": "192.168.100.71",
+     "admin_ip": "192.16.100.251"
+}
+login_student.py
+import customtkinter as ctk
+import socket
+import threading
+import json
+import os
+import webbrowser
+import struct
+import cv2
+import time
+import numpy as np
+import tkinter as tk
+from PIL import Image, ImageTk
+import screen_sender
+from student_webcam_window import StudentWebcamOverlay
+import pygetwindow as gw
+
+CONFIG_FILE = "config.json"
+
+def get_teacher_ip():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                data = json.load(f)
+                return data.get("teacher_ip", "192.168.100.71")
+        except:
+            pass
+    return "192.168.100.71"
+
+TEACHER_IP = get_teacher_ip()
+LOG_PORT = 5001
+USER_FILE = "users.json"
+
+class LockScreen(ctk.CTkToplevel):
+    def __init__(self, master):
+        super().__init__(master)
+        self.attributes("-fullscreen", True)
+        self.attributes("-topmost", True)
+        self.title("Terminal Locked")
+        ctk.CTkLabel(self, text="TERMINAL LOCKED", font=("Arial", 60, "bold"), text_color="red").pack(expand=True)
+
+class DemoViewer(ctk.CTkToplevel):
+    def __init__(self, master=None):
+        super().__init__(master)
+        self.title("Teacher Fullscreen Demo - Live Stream")
+        self.attributes("-fullscreen", True)
+        self.attributes("-topmost", True)
+        
+        self.video_label = tk.Label(self, bg="black")
+        self.video_label.pack(fill="both", expand=True)
+        
+        self.latest_image = None
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.bind("<Escape>", lambda e: self.on_close())
+        self.video_label.bind("<Configure>", self.on_resize)
+
+    def update_frame(self, data):
+        try:
+            nparr = np.frombuffer(data, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if frame is None:
+                return
+            
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image = Image.fromarray(frame)
+            self.latest_image = image
+            
+            new_w = self.video_label.winfo_width()
+            new_h = self.video_label.winfo_height()
+            
+            if new_w > 10 and new_h > 10:
+                image = image.resize((new_w, new_h), Image.Resampling.BILINEAR)
+                
+            photo = ImageTk.PhotoImage(image)
+            self.video_label.config(image=photo)
+            self.video_label.image = photo 
+        except Exception as e:
+            print(f"Error sa pag-update ng live demo frame: {e}")
+
+    def on_resize(self, event):
+        if self.latest_image:
+            try:
+                new_w = self.video_label.winfo_width()
+                new_h = self.video_label.winfo_height()
+                if new_w > 10 and new_h > 10:
+                    resized_img = self.latest_image.resize((new_w, new_h), Image.Resampling.BILINEAR)
+                    photo = ImageTk.PhotoImage(resized_img)
+                    self.video_label.config(image=photo)
+                    self.video_label.image = photo
+            except:
+                pass
+
+    def on_close(self):
+        try:
+            self.withdraw()
+        except:
+            pass
+
+class RegisterWindow(ctk.CTkToplevel):
+    def __init__(self, master, teacher_ip, log_port):
+        super().__init__(master)
+        self.teacher_ip = teacher_ip
+        self.log_port = log_port
+        self.title("Student Registration")
+        self.geometry("350x400")
+        self.attributes("-topmost", True)
+        
+        ctk.CTkLabel(self, text="Create Student Account", font=("Arial", 20, "bold")).pack(pady=30)
+        self.user_entry = ctk.CTkEntry(self, placeholder_text="Username", width=250)
+        self.user_entry.pack(pady=10)
+        self.pass_entry = ctk.CTkEntry(self, placeholder_text="Password", show="*", width=250)
+        self.pass_entry.pack(pady=10)
+        
+        ctk.CTkButton(self, text="Submit Registration", fg_color="green", command=self.submit_reg).pack(pady=20)
+        self.status_lbl = ctk.CTkLabel(self, text="", text_color="white")
+        self.status_lbl.pack()
+
+    def submit_reg(self):
+        user = self.user_entry.get().strip()
+        pwd = self.pass_entry.get().strip()
+        if user and pwd:
+            try:
+                client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                client.connect((TEACHER_IP, LOG_PORT))
+                msg = f"ACTION: REGISTER | USER: {user} | PWD: {pwd}"
+                client.send(msg.encode())
+                client.close()
+                self.status_lbl.configure(text="Naipadala na! Maghintay ng approval.", text_color="green")
+            except Exception as e:
+                self.status_lbl.configure(text=f"Nabigo ang koneksyon: {e}", text_color="red")
+        else:
+            self.status_lbl.configure(text="Punan ang lahat ng kahon.", text_color="orange")
+
+class StudentDashboard(ctk.CTkToplevel):
+    def __init__(self, username, master_app):
+        super().__init__()
+        self.username = username
+        self.master_app = master_app
+        self.title(f"Student Portal - {self.username}")
+        self.geometry("500x450")
+        
+        tabview = ctk.CTkTabview(self)
+        tabview.pack(expand=True, fill="both", padx=20, pady=20)
+        tabview.add("My Account")
+        tabview.add("Settings")
+        
+        ctk.CTkLabel(tabview.tab("My Account"), text=f"Welcome, {self.username}").pack(pady=20)
+        ctk.CTkButton(tabview.tab("My Account"), text="Logout", fg_color="red", command=self.logout).pack(pady=10)
+        
+        self.old_p = ctk.CTkEntry(tabview.tab("Settings"), placeholder_text="Old Password", show="*")
+        self.old_p.pack(pady=5)
+        self.new_p = ctk.CTkEntry(tabview.tab("Settings"), placeholder_text="New Password", show="*")
+        self.new_p.pack(pady=5)
+        self.re_p = ctk.CTkEntry(tabview.tab("Settings"), placeholder_text="Re-type New", show="*")
+        self.re_p.pack(pady=5)
+        ctk.CTkButton(tabview.tab("Settings"), text="Update Password", command=self.change_password).pack(pady=10)
+        self.msg = ctk.CTkLabel(tabview.tab("Settings"), text="")    
+        self.msg.pack()
+
+    def change_password(self):
+        if self.master_app.USERS[self.username]["password"] == self.old_p.get():
+            if self.new_p.get() == self.re_p.get():
+                self.master_app.USERS[self.username]["password"] = self.new_p.get()
+                self.master_app.save_users()
+                self.msg.configure(text="Success!", text_color="green")
+            else: self.msg.configure(text="Mismatch!", text_color="red")
+        else: self.msg.configure(text="Wrong Password!", text_color="red")
+
+    def logout(self):
+        session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "active_session.json")
+        if os.path.exists(session_path):
+            try:
+                os.remove(session_path)
+            except:
+                pass
+        
+        if hasattr(self.master_app, 'webcam_overlay') and self.master_app.webcam_overlay:
+            self.master_app.webcam_overlay.close_camera()
+            self.master_app.webcam_overlay = None
+
+        self.master_app.notify_teacher("LOGOUT", self.username)
+        self.destroy()
+        self.master_app.deiconify()        
+
+class LoginApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("Student Login")
+        self.geometry("400x520")
+        
+        self.active_lock = None
+        self.demo_window = None
+        self.webcam_overlay = None
+        self.in_demo_mode = False
+        self.load_users()
+        
+        threading.Thread(target=self.start_server, daemon=True).start()
+        threading.Thread(target=self.start_broadcast_listener, daemon=True).start()
+        threading.Thread(target=screen_sender.start_control_listener, daemon=True).start()
+        threading.Thread(target=self.track_active_window, daemon=True).start()
+        
+        ctk.CTkLabel(self, text="ScholarNet Login", font=("Arial", 25, "bold")).pack(pady=30)
+        self.user_entry = ctk.CTkEntry(self, placeholder_text="Username")
+        self.user_entry.pack(pady=10)
+        self.pass_entry = ctk.CTkEntry(self, placeholder_text="Password", show="*")
+        self.pass_entry.pack(pady=10)
+        
+        ctk.CTkButton(self, text="Login", command=self.check_login).pack(pady=10)
+        
+        self.error_label = ctk.CTkLabel(self, text="", text_color="red")
+        self.error_label.pack(pady=5)
+        
+        ctk.CTkButton(self, text="Create an Account", fg_color="transparent", text_color="#1f6aa5", 
+                      command=lambda: RegisterWindow(self, TEACHER_IP, LOG_PORT)).pack(pady=5)
+
+    def load_users(self):
+        if os.path.exists(USER_FILE):
+            with open(USER_FILE, "r") as f:
+                self.USERS = json.load(f)
+        else:
+            self.USERS = {"student": {"password": "student123", "role": "Student"}}
+            self.save_users()
+
+    def save_users(self):
+        with open(USER_FILE, "w") as f:
+            json.dump(self.USERS, f)
+
+    def track_active_window(self):
+        """Sinusubaybayan ang active window nang direkta nang hindi na naghihintay ng session file[cite: 8]."""
+        last_window = ""
+        while True:
+            try:
+                active_win = gw.getActiveWindow()
+                if active_win and active_win.title:
+                    current_window = active_win.title
+                    if current_window != last_window and current_window.strip() != "":
+                        last_window = current_window
+                        
+                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        s.connect((TEACHER_IP, LOG_PORT))
+                        
+                        username_val = "Student"
+                        session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "active_session.json")
+                        if os.path.exists(session_path):
+                            try:
+                                with open(session_path, "r") as sf:
+                                    username_val = json.load(sf).get("username", "Student")
+                            except:
+                                pass
+                        else:
+                            try:
+                                val = self.user_entry.get().strip()
+                                if val:
+                                    username_val = val
+                            except:
+                                pass
+                        
+                        message = f"ACTIVITY: {socket.gethostname()} ({username_val}) - {current_window}"
+                        s.sendall(message.encode('utf-8'))
+                        s.close()
+                        print(f"[DEBUG STUDENT ACTIVITY] Matagumpay na na-send: {message}")
+            except Exception as e:
+                print(f"[DEBUG STUDENT ACTIVITY ERROR]: {e}")
+            time.sleep(3)
+
+    def start_broadcast_listener(self):
+        PORT = 9996
+        while True:
+            while not self.in_demo_mode:
+                time.sleep(0.2)
+                
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                s.connect((TEACHER_IP, PORT))
+                
+                while self.in_demo_mode:
+                    header = s.recv(4)
+                    if not header:
+                        break
+                    frame_length = struct.unpack("!I", header)[0]
+                    
+                    data = bytearray()
+                    while len(data) < frame_length:
+                        packet = s.recv(frame_length - len(data))
+                        if not packet:
+                            break
+                        data.extend(packet)
+                    
+                    if len(data) == frame_length:
+                        try:
+                            s.setblocking(False)
+                            while True:
+                                extra_header = s.recv(4)
+                                if not extra_header:
+                                    break
+                                extra_len = struct.unpack("!I", extra_header)[0]
+                                extra_data = s.recv(extra_len)
+                                if len(extra_data) == extra_len:
+                                    data = extra_data
+                        except BlockingIOError:
+                            pass
+                        finally:
+                            s.setblocking(True)
+
+                        if self.demo_window and self.demo_window.winfo_exists():
+                            self.after(0, lambda d=bytes(data): self.demo_window.update_frame(d))
+            except Exception:
+                time.sleep(0.5)
+
+    def start_server(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("0.0.0.0", 5000))
+        server.listen(5)
+        while True:
+            try:
+                conn, addr = server.accept()
+                command = conn.recv(1024).decode().strip()
+                
+                session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "active_session.json")
+                is_logged_in = os.path.exists(session_path)
+                
+                if not is_logged_in and command in ["LOCK", "UNLOCK", "SHUTDOWN", "REBOOT", "SLEEP", "START_DEMO", "STOP_DEMO"]:
+                    conn.close()
+                    continue
+
+                if command == "LOCK": 
+                    self.after(0, self.show_lock)
+                elif command == "UNLOCK":
+                    self.after(0, self.hide_lock)
+                elif command == "START_DEMO":
+                    self.in_demo_mode = True
+                    self.after(0, self.open_demo_viewer)
+                elif command == "STOP_DEMO":
+                    self.in_demo_mode = False
+                    self.after(0, self.close_demo_viewer)
+                elif command.startswith("MSG:"):
+                    msg_content = command.replace("MSG:", "", 1)
+                    self.after(0, lambda: self.show_teacher_message(msg_content))
+                elif command.startswith("URL:"):
+                    url_content = command.replace("URL:", "", 1)
+                    self.after(0, lambda: self.open_student_browser(url_content))
+                elif command == "SHUTDOWN":
+                    os.system("shutdown /s /t 1")
+                elif command == "REBOOT":
+                    os.system("shutdown /r /t 1")
+                elif command == "SLEEP":
+                    os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
+                conn.close()
+            except: break
+
+    def open_demo_viewer(self):
+        if not self.demo_window or not self.demo_window.winfo_exists():
+            self.demo_window = DemoViewer(self)
+        else:
+            self.demo_window.deiconify()
+
+    def close_demo_viewer(self):
+        if self.demo_window and self.demo_window.winfo_exists():
+           self.demo_window.withdraw()
+
+    def show_lock(self):
+        if not self.active_lock:
+            self.active_lock = LockScreen(self)
+
+    def hide_lock(self):
+        if self.active_lock:
+            self.active_lock.destroy()
+            self.active_lock = None
+
+    def show_teacher_message(self, message):
+        msg_win = ctk.CTkToplevel(self)
+        msg_win.title("Mensahe mula sa Guro")
+        msg_win.geometry("400x200")
+        msg_win.attributes("-topmost", True)
+        msg_win.grab_set()
+        
+        ctk.CTkLabel(msg_win, text="ANUNSYO MULA SA GURO", font=("Arial", 14, "bold"), text_color="#1f6aa5").pack(pady=15)
+        
+        txt_box = ctk.CTkTextbox(msg_win, width=350, height=80)
+        txt_box.insert("1.0", message)
+        txt_box.configure(state="disabled")
+        txt_box.pack(pady=5)
+        
+        ctk.CTkButton(msg_win, text="OK", command=msg_win.destroy).pack(pady=15)
+
+    def open_student_browser(self, url):
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "https://" + url
+        webbrowser.open_new_tab(url)
+
+    def check_login(self):
+        user = self.user_entry.get().strip()
+        pwd = self.pass_entry.get().strip()
+        
+        if not user or not pwd:
+            self.error_label.configure(text="Punan ang lahat ng kahon.", text_color="orange")
+            return
+
+        try:
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.connect((TEACHER_IP, LOG_PORT))
+            
+            msg = f"ACTION: LOGIN_CHECK | USER: {user} | PWD: {pwd}"
+            client.send(msg.encode())
+            
+            response = client.recv(1024).decode().strip()
+            client.close()
+            
+            if response == "SUCCESS":
+                session_data = {"username": user}
+                session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "active_session.json")
+                with open(session_path, "w") as f:
+                    json.dump(session_data, f)
+
+                self.notify_teacher("LOGIN", user)
+    
+                threading.Thread(target=screen_sender.start_stream, args=(TEACHER_IP,), daemon=True).start()
+                threading.Thread(target=screen_sender.start_admin_stream, daemon=True).start()
+                threading.Thread(target=screen_sender.start_live_monitoring, args=(TEACHER_IP,), daemon=True).start()
+    
+                self.withdraw()
+                self.webcam_overlay = StudentWebcamOverlay(self, username=user, teacher_ip=TEACHER_IP, log_port=LOG_PORT)
+                StudentDashboard(username=user, master_app=self)
+
+            else:
+                self.error_label.configure(text="Invalid credentials o hindi pa na-approve!", text_color="red")
+        except Exception as e:
+                self.error_label.configure(text=f"Hindi makakonekta sa Guro: {e}", text_color="red")
+        
+    def notify_teacher(self, action, username):
+        try:
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.connect((TEACHER_IP, LOG_PORT))
+            msg = f"ACTION: {action} | USER: {username}"
+            client.send(msg.encode())
+            client.close()
+        except Exception:
+            pass
+
+if __name__ == "__main__":
+    app = LoginApp()
+    app.mainloop()
+README.md
+��#   t h e s i s  
+ #   t h e s i s _ s t u d e n t  
+ 
+screen_sender.py
+import mss
+import cv2
+import socket
+import numpy as np
+import time
+import pyautogui
+import os
+import json
+
+pyautogui.FAILSAFE = False
+
+ADMIN_IP = "192.168.100.251"
+
+def get_current_username():
+    try:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        session_file = os.path.join(base_dir, "active_session.json")
+        if os.path.exists(session_file):
+            with open(session_file, "r") as f:
+                data = json.load(f)
+                return data.get("username", "Student")
+    except:
+        pass
+    return None
+
+def start_control_listener():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("0.0.0.0", 9999))
+    server.listen(5)
+    
+    control_active = False 
+    while True:
+        try:
+            conn, addr = server.accept()
+            while True:
+                data = conn.recv(1024).decode()
+                if not data: break
+                
+                commands = data.split("\n")
+                for line in commands:
+                    line = line.strip()
+                    if not line: continue
+                    
+                    if line == "START_CONTROL":
+                        control_active = True
+                    elif line == "STOP_CONTROL":
+                        control_active = False
+                    elif control_active:
+                        if line.startswith("MOVE"):
+                            parts = line.split(":")
+                            if len(parts) == 3:
+                                pyautogui.moveTo(int(parts[1]), int(parts[2]), duration=0.0)
+                        elif line == "CLICK":
+                            pyautogui.click()
+            conn.close()
+        except Exception:
+            pass
+
+def start_live_monitoring(admin_ip):
+    """Port 9997 para sa Remote View / Remote Control (Naka-optimize sa 15 FPS)"""
+    while True:
+        username = get_current_username()
+        if not username:
+            time.sleep(2)
+            continue
+            
+        try:
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            client.connect((admin_ip, 9997))
+            
+            with mss.mss() as sct:
+                monitor = sct.monitors[1]
+                while True:
+                    if not os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "active_session.json")):
+                        client.close()
+                        break
+                        
+                    img = np.array(sct.grab(monitor))
+                    
+                    cur_x, cur_y = pyautogui.position()
+                    cv2.circle(img, (cur_x, cur_y), 10, (0, 0, 255), -1)
+                    
+                    img_bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+                    
+                    # Bawasan ang resolution at kalidad para hindi bumagal ang network
+                    img_bgr = cv2.resize(img_bgr, (960, 540), interpolation=cv2.INTER_AREA)
+                    _, encoded = cv2.imencode('.jpg', img_bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    data = encoded.tobytes()
+                    
+                    client.sendall(len(data).to_bytes(4, byteorder='big') + data)
+                    time.sleep(0.06) # ~15 FPS limit para sa monitoring
+        except Exception:
+            time.sleep(2)
+
+def stream_to_target(target_ip, target_port):
+    """Optimized stream para sa guro (Binabaan ang quality at nilagyan ng FPS limit)"""
+    while True:
+        username = get_current_username()
+        if not username:
+            time.sleep(2)
+            continue
+            
+        try:
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            client.connect((target_ip, target_port))
+            
+            name_msg = f"NAME: {username}\n"
+            client.sendall(name_msg.encode('utf-8'))
+            
+            with mss.mss() as sct:
+                monitor = sct.monitors[1]
+                while True:
+                    if not os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "active_session.json")):
+                        client.close()
+                        break
+                    
+                    img = np.array(sct.grab(monitor))
+                    img_bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+                    
+                    # I-resize sa 720p at 75% quality para hindi mag-lag o mag-freeze ang buong app
+                    img_bgr = cv2.resize(img_bgr, (1280, 720), interpolation=cv2.INTER_AREA)
+                    _, encoded = cv2.imencode('.jpg', img_bgr, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                    data = encoded.tobytes()
+                    
+                    client.sendall(len(data).to_bytes(4, byteorder='big') + data)
+                    time.sleep(0.04) # ~25 FPS limit
+        except Exception as e:
+            time.sleep(2)
+
+def start_stream(teacher_ip):
+    stream_to_target(teacher_ip, 9998)
+
+def start_admin_stream():
+    stream_to_target(ADMIN_IP, 9998)
+student_webcam_window.py
+import cv2
+import customtkinter as ctk
+from PIL import Image, ImageTk
+import threading
+import time
+import socket
+from deepface import DeepFace
+
+class StudentWebcamOverlay(ctk.CTkToplevel):
+    def __init__(self, master=None, username="Student", teacher_ip="192.168.100.71", log_port=5001):
+        super().__init__(master)
+        self.username = username
+        self.teacher_ip = teacher_ip
+        self.log_port = log_port
+        self.last_sent_time = 0
+        self.last_expression = ""
+        self.current_expression = None  # Sinimulan sa None para walang default expression kung walang mukha
+        
+        self.overrideredirect(True)
+        
+        # Sukat at pwesto sa kanang ibaba (Bottom-Right) para sa Normal state
+        width = 400
+        height = 300
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        
+        self.normal_x = screen_width - width - 20
+        self.normal_y = screen_height - height - 70
+        
+        self.geometry(f"{width}x{height}+{self.normal_x}+{self.normal_y}")
+        self.attributes("-topmost", True)
+        
+        self.is_maximized = False
+        self.is_minimized = False
+        self.normal_geometry = f"{width}x{height}+{self.normal_x}+{self.normal_y}"
+        
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        
+        # --- VIDEO CONTAINER ---
+        self.video_label = ctk.CTkLabel(self, text="", fg_color="#111111")
+        self.video_label.grid(row=0, column=0, sticky="nsew")
+        
+        # Dragging functionality
+        self.video_label.bind("<ButtonPress-1>", self.start_move)
+        self.video_label.bind("<B1-Motion>", self.do_move)
+
+        # --- FLOATING CONTROL BUTTONS ---
+        self.btn_frame = ctk.CTkFrame(self, fg_color="#222222", corner_radius=4)
+        self.update_buttons_layout()
+
+        # Minimize / Restore Small Button (-)
+        self.min_btn = ctk.CTkButton(self.btn_frame, text="_", width=20, height=18, font=("Arial", 10, "bold"), fg_color="transparent", hover_color="#444444", command=self.toggle_minimize)
+        self.min_btn.pack(side="left", padx=1, pady=1)
+        
+        # Fullscreen / Restore Button ([ ] / ❐)
+        self.full_btn = ctk.CTkButton(self.btn_frame, text="□", width=20, height=18, font=("Arial", 10, "bold"), fg_color="transparent", hover_color="#444444", command=self.toggle_fullscreen)
+        self.full_btn.pack(side="left", padx=1, pady=1)
+
+        self.cap = cv2.VideoCapture(0)
+        self.running = True
+        
+        # Simulan ang video loop at ang background emotion analyzer thread
+        self.thread = threading.Thread(target=self.update_video, daemon=True)
+        self.thread.start()
+        
+        self.analysis_thread = threading.Thread(target=self.analyze_emotion_loop, daemon=True)
+        self.analysis_thread.start()
+
+    def update_buttons_layout(self):
+        if self.is_minimized:
+            self.btn_frame.place(relx=0.96, rely=0.92, anchor="se")
+        else:
+            self.btn_frame.place(relx=0.97, rely=0.95, anchor="se")
+
+    def start_move(self, event):
+        if not self.is_maximized:
+            self.x = event.x_root
+            self.y = event.y_root
+
+    def do_move(self, event):
+        if not self.is_maximized:
+            deltax = event.x_root - self.x
+            deltay = event.y_root - self.y
+            x = self.winfo_x() + deltax
+            y = self.winfo_y() + deltay
+            self.geometry(f"+{x}+{y}")
+            self.x = event.x_root
+            self.y = event.y_root
+
+    def toggle_minimize(self):
+        if not self.is_minimized:
+            if not self.is_maximized:
+                self.normal_geometry = self.geometry()
+            
+            mini_w = 160
+            mini_h = 120
+            
+            screen_width = self.winfo_screenwidth()
+            screen_height = self.winfo_screenheight()
+            
+            min_x = screen_width - mini_w - 20
+            min_y = screen_height - mini_h - 70
+            
+            self.geometry(f"{mini_w}x{mini_h}+{min_x}+{min_y}")
+            self.is_minimized = True
+            self.is_maximized = False
+            self.min_btn.configure(text="❐")
+            self.full_btn.configure(text="□")
+            self.update_buttons_layout()
+        else:
+            self.geometry(self.normal_geometry)
+            self.is_minimized = False
+            self.min_btn.configure(text="_")
+            self.update_buttons_layout()
+
+    def toggle_fullscreen(self):
+        if not self.is_minimized:
+            if not self.is_maximized:
+                self.normal_geometry = self.geometry()
+                screen_width = self.winfo_screenwidth()
+                screen_height = self.winfo_screenheight()
+                self.geometry(f"{screen_width}x{screen_height}+0+0")
+                self.is_maximized = True
+                self.full_btn.configure(text="❐")
+                self.update_buttons_layout()
+            else:
+                self.geometry(self.normal_geometry)
+                self.is_maximized = False
+                self.full_btn.configure(text="□")
+                self.update_buttons_layout()
+
+    def send_expression(self, expression):
+        try:
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.settimeout(1.0)
+            client.connect((self.teacher_ip, self.log_port))
+            
+            pc_name = socket.gethostname()
+            msg = f"EXPRESSION: {pc_name} - {self.username} | {expression}"
+            client.sendall(msg.encode('utf-8'))
+            client.close()
+        except Exception as e:
+            print(f"Error sa pagpadala ng expression: {e}")
+
+    def analyze_emotion_loop(self):
+        """Hiwalay na thread para suriin ang emosyon gamit ang DeepFace bawat 2 segundo"""
+        while self.running:
+            try:
+                ret, frame = self.cap.read()
+                if ret:
+                    # Ginamit ang enforce_detection=True para mag-error/huminto kapag walang mukha
+                    analysis = DeepFace.analyze(frame, actions=['emotion'], enforce_detection=True, silent=True)
+                    if isinstance(analysis, list) and len(analysis) > 0:
+                        analysis = analysis[0]
+                        raw_emotion = analysis.get('dominant_emotion', 'neutral')
+                        
+                        emotion_map = {
+                            "happy": "Smiling",
+                            "sad": "Sad",
+                            "angry": "Angry",
+                            "surprise": "Surprised",
+                            "fear": "Fearful",
+                            "disgust": "Disgusted",
+                            "neutral": "Neutral"
+                        }
+                        self.current_expression = emotion_map.get(raw_emotion, raw_emotion.capitalize())
+                    else:
+                        self.current_expression = None
+            except Exception as e:
+                # Kapag walang mukha na na-detect sa frame, ginagawang None ang expression
+                self.current_expression = None
+            
+            # Maghintay ng 2 segundo bago suriin ulit
+            time.sleep(2.0)
+
+    def update_video(self):
+        while self.running and self.cap.isOpened():
+            ret, frame = self.cap.read()
+            if not ret:
+                break
+            
+            frame = cv2.flip(frame, 1)
+            
+            # Real-time check: I-send lamang kapag may valid na expression at nagbago ito
+            current_time = time.time()
+            if self.current_expression and (self.current_expression != self.last_expression or (current_time - self.last_sent_time > 0.5)):
+                threading.Thread(target=self.send_expression, args=(self.current_expression,), daemon=True).start()
+                self.last_expression = self.current_expression
+                self.last_sent_time = current_time
+            
+            # Protektahan laban sa TclError kapag isinasara o binabago ang window
+            try:
+                if not self.winfo_exists():
+                    break
+                width = self.video_label.winfo_width()
+                height = self.video_label.winfo_height()
+                
+                if width > 10 and height > 10:
+                    frame = cv2.resize(frame, (width, height))
+                
+                # Ipakita ang emosyon o kaya ay "No face detected" kung walang mukha
+                if self.current_expression:
+                    cv2.putText(frame, f"Emotion: {self.current_expression}", (15, 30), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+                else:
+                    cv2.putText(frame, f"Emotion: No face detected", (15, 30), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+                
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(rgb_frame)
+                imgtk = ImageTk.PhotoImage(image=img)
+                
+                self.video_label.configure(image=imgtk)
+                self.video_label.image = imgtk
+            except Exception:
+                break
+                
+            time.sleep(0.03)
+                
+    def close_camera(self):
+        self.running = False
+        if self.cap.isOpened():
+            self.cap.release()
+        try:
+            self.destroy()
+        except:
+            pass
+users.json
+{"student": {"password": "wawa", "role": "Student"}}

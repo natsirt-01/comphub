@@ -1,0 +1,1980 @@
+.gitignore
+venv/
+__pycache__/
+.deepface/
+.vscode/
+*.pyc
+.vscode/settings.json
+{
+    "python-envs.defaultEnvManager": "ms-python.python:system"
+}
+active_students.json
+{}
+activity_log.txt
+
+admin_dashboard/__init__.py
+# nagsasabi na isang package ang iimport
+admin_dashboard/admin_dash.py
+import customtkinter as ctk
+import tkinter.ttk as ttk
+import socket  # Inilipat sa itaas (Standard practice)
+
+class AdminDashboard(ctk.CTkToplevel):
+    def __init__(self, master_app):
+        super().__init__()
+        self.master_app = master_app
+        self.title("Super Admin Dashboard")
+        self.geometry("900x600")
+        
+        tabview = ctk.CTkTabview(self)
+        tabview.pack(expand=True, fill="both", padx=20, pady=20)
+        
+        tabview.add("Logs & History")
+        tabview.add("User Management")
+        
+        # --- Logs & History Tab ---
+        self.search_entry = ctk.CTkEntry(tabview.tab("Logs & History"), placeholder_text="Search student name...")
+        self.search_entry.pack(pady=10, fill="x")
+        self.search_entry.bind("<KeyRelease>", self.filter_logs)
+        
+        self.tree = ttk.Treeview(tabview.tab("Logs & History"), columns=("User", "Login", "Logout", "Duration"), show='headings')
+        for col in ["User", "Login", "Logout", "Duration"]:
+            self.tree.heading(col, text=col)
+        self.tree.pack(fill="both", expand=True)
+        
+        # --- User Management Tab ---
+        ctk.CTkLabel(tabview.tab("User Management"), text="Reset Student Password", font=("Arial", 16, "bold")).pack(pady=10)
+        
+        self.target_user_entry = ctk.CTkEntry(tabview.tab("User Management"), placeholder_text="Enter Student Username")
+        self.target_user_entry.pack(pady=10)
+        
+        ctk.CTkButton(tabview.tab("User Management"), text="Reset to 'student123'", 
+                      fg_color="red", command=self.reset_student_password).pack(pady=10)
+        
+        self.status_label = ctk.CTkLabel(tabview.tab("User Management"), text="")
+        self.status_label.pack()
+        
+        self.refresh_table()
+
+    def reset_student_password(self):
+        username = self.target_user_entry.get()
+        if username in self.master_app.USERS:
+            self.master_app.USERS[username]["password"] = "student123"
+            self.master_app.save_users()
+            
+            try:
+                STUDENT_PC_IP = "192.168.100.251"
+                client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                client.settimeout(5) # Maghintay ng 5 segundo
+                client.connect((STUDENT_PC_IP, 5000))
+                client.send("RESET_PWD".encode())
+                client.close()
+                self.status_label.configure(text="Reset success!", text_color="green")
+            except Exception as e:
+                # DITO NATIN MAKIKITA ANG TUNAY NA DAHILAN
+                self.status_label.configure(text=f"Error: {str(e)}", text_color="red")
+        else:
+            self.status_label.configure(text="User not found!", text_color="red")
+    def refresh_table(self, data=None):
+        for item in self.tree.get_children(): self.tree.delete(item)
+        target = data if data is not None else self.master_app.all_logs
+        for entry in target:
+            self.tree.insert("", "end", values=(entry['user'], entry['login'], entry['logout'], entry['duration']))
+
+    def filter_logs(self, event):
+        query = self.search_entry.get().lower()
+        filtered = [log for log in self.master_app.all_logs if query in log['user'].lower()]
+        self.refresh_table(filtered)
+admin_dashboard/admin_listener.py
+
+client_listener.py
+import socket
+import threading
+import customtkinter as ctk
+
+class LockScreen(ctk.CTkToplevel):
+    def __init__(self, master):
+        super().__init__(master)
+        self.attributes("-fullscreen", True)
+        self.attributes("-topmost", True)
+        self.title("Terminal Locked")
+        ctk.CTkLabel(self, text="TERMINAL LOCKED", font=("Arial", 60, "bold"), text_color="red").pack(expand=True)
+        ctk.CTkLabel(self, text="Naghihintay ng pahintulot mula sa Admin...", font=("Arial", 20)).pack(pady=20)
+
+class ClientApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("Student System")
+        self.geometry("300x200")
+        self.lock_window = None
+        
+        # Simulan ang server sa background
+        threading.Thread(target=self.start_server, daemon=True).start()
+
+    def start_server(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("0.0.0.0", 5000))
+        server.listen(5)
+        print("Client Listener is running...")
+        
+        while True:
+            conn, addr = server.accept()
+            command = conn.recv(1024).decode()
+            
+            # Gamitin ang .after() para ipasa ang utos sa main UI thread
+            if command == "LOCK":
+                self.after(0, self.show_lock)
+            elif command == "UNLOCK":
+                self.after(0, self.hide_lock)
+            conn.close()
+
+    def show_lock(self):
+        if self.lock_window is None:
+            self.lock_window = LockScreen(self)
+
+    def hide_lock(self):
+        if self.lock_window:
+            self.lock_window.destroy()
+            self.lock_window = None
+
+if __name__ == "__main__":
+    app = ClientApp()
+    app.mainloop()
+client_side.py
+import socket
+import threading
+import customtkinter as ctk
+import datetime
+
+# Configuration
+TEACHER_IP = "192.168.100.71" # IP ng Teacher PC
+LOG_PORT = 5001
+
+class LoginWindow(ctk.CTk):
+    def __init__(self, callback):
+        super().__init__()
+        self.callback = callback
+        self.title("Student Login")
+        self.geometry("300x250")
+        
+        ctk.CTkLabel(self, text="Username").pack(pady=10)
+        self.user_entry = ctk.CTkEntry(self)
+        self.user_entry.pack(pady=5)
+        
+        ctk.CTkButton(self, text="Login", command=self.attempt_login).pack(pady=20)
+
+    def attempt_login(self):
+        user = self.user_entry.get()
+        if user:
+            # Send login info to Teacher PC
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect((TEACHER_IP, LOG_PORT))
+                s.sendall(f"USER: {user} | PC: {socket.gethostname()} | Time: {datetime.datetime.now().strftime('%H:%M:%S')}".encode())
+                s.close()
+            except:
+                print("Cannot connect to Teacher for logging")
+            self.callback()
+            self.destroy()
+
+class ClientApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("Student Terminal")
+        self.geometry("300x200")
+        self.lock_window = None
+        ctk.CTkLabel(self, text="System Online").pack(pady=50)
+        threading.Thread(target=self.start_listener, daemon=True).start()
+
+    def start_listener(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("0.0.0.0", 5000))
+        server.listen(5)
+        while True:
+            conn, addr = server.accept()
+            command = conn.recv(1024).decode()
+            if command == "LOCK": self.after(0, self.show_lock)
+            elif command == "UNLOCK": self.after(0, self.hide_lock)
+            conn.close()
+
+    def show_lock(self):
+        if not self.lock_window:
+            self.lock_window = ctk.CTkToplevel(self)
+            self.lock_window.attributes("-fullscreen", True)
+            self.lock_window.attributes("-topmost", True)
+            ctk.CTkLabel(self.lock_window, text="TERMINAL LOCKED", font=("Arial", 80, "bold"), text_color="red").pack(expand=True)
+
+    def hide_lock(self):
+        if self.lock_window:
+            self.lock_window.destroy()
+            self.lock_window = None
+
+def run_app():
+    app = ClientApp()
+    app.mainloop()
+
+if __name__ == "__main__":
+    login = LoginWindow(callback=run_app)
+    login.mainloop()
+
+    # Eto ang magpapatakbo ng login
+    login = LoginWindow(callback=start_app)
+    login.mainloop()
+config.json
+{
+    "teacher_ip": "192.168.100.71"
+}
+config.py
+# config.py
+import customtkinter as ctk
+
+def apply_theme():
+    ctk.set_appearance_mode("dark")
+    ctk.set_default_color_theme("blue")
+login.py
+import customtkinter as ctk
+import json
+import os
+import socket
+import threading
+import datetime
+import struct
+import time
+import cv2
+import numpy as np
+import pyautogui
+from config import apply_theme
+from teacher_dashboard.teacher_dash import TeacherDashboard
+from teacher_dashboard.network_listeners import handle_student_expression  # <--- Na-import na rito
+from admin_dashboard.admin_dash import AdminDashboard
+
+apply_theme()
+
+class LoginApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("ScholarNet Login - Teacher/Admin")
+        self.geometry("350x450")
+        
+        self.USERS = {
+            "student": {"password": "student123", "role": "Student"},
+            "teacher": {"password": "teacher123", "role": "Teacher"},
+            "admin": {"password": "admin123", "role": "Admin"}
+        }
+        
+        self.all_logs = [] 
+        self.active_broadcast = False
+        self.broadcast_socket = None
+        self.active_teacher_dashboard = None  # <--- Reference para sa student expressions
+        
+        # Simulan ang background log listener at broadcast server
+        threading.Thread(target=self.start_log_listener, daemon=True).start()
+        threading.Thread(target=self.broadcast_stream_server, daemon=True).start()
+        
+        ctk.CTkLabel(self, text="ScholarNet Login", font=("Arial", 20, "bold")).pack(pady=20)
+        self.user_entry = ctk.CTkEntry(self, placeholder_text="Username")
+        self.user_entry.pack(pady=10)
+        self.pass_entry = ctk.CTkEntry(self, placeholder_text="Password", show="*")
+        self.pass_entry.pack(pady=10)
+        self.btn_login = ctk.CTkButton(self, text="Login", command=self.check_login)
+        self.btn_login.pack(pady=20)
+        self.error_label = ctk.CTkLabel(self, text="", text_color="red")
+        self.error_label.pack()
+
+    def start_log_listener(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("0.0.0.0", 5001))
+        server.listen(5)
+        print("==========================================")
+        print("[DEBUG] Log & Command listener ay BUKAS sa port 5001")
+        print("==========================================")
+        while True:
+            try:
+                conn, addr = server.accept()
+                data = conn.recv(2048).decode('utf-8', errors='ignore').strip()
+                
+                if "ACTION: LOGIN_CHECK" in data:
+                    self.handle_login_check(conn, data)
+                elif "ACTION: REGISTER" in data:
+                    self.process_register(data)
+                    conn.close()
+                elif "EXPRESSION:" in data:
+                    expr_content = data.replace("EXPRESSION:", "").strip()
+                    print(f"[STUDENT EXPRESSION] mula {addr[0]}: {expr_content}")
+                    
+                    if self.active_teacher_dashboard:
+                        if not hasattr(self.active_teacher_dashboard, 'inbox_logs_data'):
+                            self.active_teacher_dashboard.inbox_logs_data = []
+                            
+                        new_log = {
+                            "time": datetime.datetime.now().strftime('%H:%M:%S'),
+                            "message": f"[{addr[0]}] Expression: {expr_content}"
+                        }
+                        self.active_teacher_dashboard.inbox_logs_data.append(new_log)
+                        
+                        # I-refresh ang UI ng Inbox at Student Card nang sabay
+                        self.active_teacher_dashboard.after(
+                            0, lambda: self.active_teacher_dashboard.refresh_inbox_ui()
+                        )
+                        self.active_teacher_dashboard.after(
+                            0, lambda e=expr_content, ip=addr[0]: handle_student_expression(self.active_teacher_dashboard, e, ip)
+                        )
+                    conn.close()
+                else:
+                    self.process_log(data)
+                    conn.close()
+            except: 
+                break
+
+    def handle_login_check(self, conn, data):
+        try:
+            parts = data.split("|")
+            username = ""
+            password = ""
+            for part in parts:
+                if "USER:" in part:
+                    username = part.split("USER:")[1].strip()
+                elif "PWD:" in part:
+                    password = part.split("PWD:")[1].strip()
+            
+            BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+            user_file_path = os.path.join(BASE_DIR, "users.json")
+            
+            users_data = {}
+            if os.path.exists(user_file_path):
+                with open(user_file_path, "r") as f:
+                    try: users_data = json.load(f)
+                    except: users_data = {}
+            
+            if username in users_data and users_data[username]["password"] == password:
+                conn.send("SUCCESS".encode())
+            else:
+                conn.send("FAILED".encode())
+        except Exception as e:
+            print(f"[ERROR sa login check]: {e}")
+            conn.send("FAILED".encode())
+        finally:
+            conn.close()
+
+    def process_register(self, data):
+        try:
+            parts = data.split("|")
+            username = ""
+            password = ""
+            for part in parts:
+                if "USER:" in part:
+                    username = part.split("USER:")[1].strip()
+                elif "PWD:" in part:
+                    password = part.split("PWD:")[1].strip()
+            
+            if username and password:
+                BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+                reg_file = os.path.join(BASE_DIR, "pending_accounts.json")
+                
+                account_data = []
+                if os.path.exists(reg_file):
+                    with open(reg_file, "r") as f:
+                        try: account_data = json.load(f)
+                        except: account_data = []
+                
+                if not any(acc["username"] == username for acc in account_data):
+                    account_data.append({"username": username, "password": password, "status": "Pending"})
+                    with open(reg_file, "w") as f:
+                        json.dump(account_data, f, indent=4)
+                    print(f"[SUCCESS] Na-save si {username} sa pending_accounts.json!")
+        except Exception as e:
+            print(f"[ERROR sa pag-save ng registration]: {e}")
+
+    def process_log(self, data):
+        try:
+            parts = {p.split(": ")[0].strip(): p.split(": ")[1].strip() for p in data.split(" | ")}
+            action, user, time_str = parts.get("ACTION"), parts.get("USER"), parts.get("TIME")
+            if action == "LOGIN":
+                self.all_logs.append({"user": user, "login": time_str, "logout": "--", "duration": "--"})
+            elif action == "LOGOUT":
+                for entry in reversed(self.all_logs):
+                    if entry['user'] == user and entry['logout'] == "--":
+                        login_dt = datetime.datetime.strptime(entry['login'], "%H:%M:%S")
+                        logout_dt = datetime.datetime.strptime(time_str, "%H:%M:%S")
+                        entry.update({"logout": time_str, "duration": str(logout_dt - login_dt)})
+                        break
+        except: pass
+
+    # --- FULL SCREEN DEMO BROADCAST SERVER ---
+    def broadcast_stream_server(self):
+        PORT = 9996
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            server.bind(("0.0.0.0", PORT))
+            server.listen(10)
+            self.broadcast_socket = server
+            print(f"[DEBUG] Broadcast Stream Server ay aktibo sa port {PORT}")
+        except Exception as e:
+            print(f"[ERROR sa Broadcast Server]: {e}")
+            return
+        
+        while True:
+            try:
+                server.settimeout(1.0)
+                conn, addr = server.accept()
+                conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                threading.Thread(target=self.stream_handler, args=(conn,), daemon=True).start()
+            except socket.timeout:
+                continue
+            except:
+                break
+
+    def stream_handler(self, conn):
+        self.active_broadcast = True
+        while self.active_broadcast:
+            try:
+                screenshot = pyautogui.screenshot()
+                frame = np.array(screenshot)
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                
+                frame = cv2.resize(frame, (1280, 720), interpolation=cv2.INTER_AREA)
+                
+                _, encoded = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
+                data = encoded.tobytes()
+                
+                header = struct.pack("!I", len(data))
+                conn.sendall(header + data)
+                
+                time.sleep(0.03)
+            except:
+                break
+        try:
+            conn.close()
+        except:
+            pass
+
+    def check_login(self):
+        username = self.user_entry.get()
+        if username in self.USERS and self.USERS[username]["password"] == self.pass_entry.get():
+            self.withdraw()
+            role = self.USERS[username]["role"]
+            if role == "Teacher": 
+                dashboard = TeacherDashboard(master_app=self)
+                self.active_teacher_dashboard = dashboard  
+            elif role == "Admin": 
+                dashboard = AdminDashboard(master_app=self)
+            dashboard.protocol("WM_DELETE_WINDOW", lambda: self.on_dashboard_close(dashboard))
+        else: self.error_label.configure(text="Invalid credentials!", text_color="red")
+
+    def on_dashboard_close(self, dashboard):
+        if dashboard == self.active_teacher_dashboard:
+            self.active_teacher_dashboard = None
+        dashboard.destroy()
+        self.deiconify()
+
+if __name__ == "__main__":
+    app = LoginApp()
+    app.mainloop()
+pending_accounts.json
+[]
+teacher_dashboard/__init__.py
+
+teacher_dashboard/account_approvals.py
+import customtkinter as ctk
+import json
+import os
+
+# Gamitin ang absolute path patungo sa root folder para pareho sila ng pinaglalagyan
+# Sa loob ng teacher_dashboard/account_approvals.py
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Siguraduhing dalawang tuldok (..) ang gamit para umakyat sa root folder:
+USER_FILE = os.path.abspath(os.path.join(BASE_DIR, "..", "users.json"))
+REQUEST_FILE = os.path.abspath(os.path.join(BASE_DIR, "..", "pending_accounts.json"))
+def open_account_approvals(master_teacher):
+    window = ctk.CTkToplevel(master_teacher)
+    window.title("Account Approvals Management")
+    window.geometry("750x550")
+    window.attributes("-topmost", True)
+    
+    ctk.CTkLabel(window, text="Student Account Requests", font=("Arial", 18, "bold")).pack(pady=15)
+    
+    # Tabview para sa Pending, Accepted, at Declinedss
+    tabview = ctk.CTkTabview(window, width=700, height=380)
+    tabview.pack(padx=20, pady=5)
+    
+    tab_pending = tabview.add("Pending")
+    tab_accepted = tabview.add("Accepted")
+    tab_declined = tabview.add("Declined")
+    
+    def load_data():
+        for widget in tab_pending.winfo_children(): widget.destroy()
+        for widget in tab_accepted.winfo_children(): widget.destroy()
+        for widget in tab_declined.winfo_children(): widget.destroy()
+        
+        if not os.path.exists(REQUEST_FILE):
+            with open(REQUEST_FILE, "w") as f:
+                json.dump([], f)
+                
+        with open(REQUEST_FILE, "r") as f:
+            try:
+                accounts = json.load(f)
+            except:
+                accounts = []
+            
+        for acc in accounts:
+            username = acc["username"]
+            status = acc.get("status", "Pending")
+            
+            if status == "Pending":
+                frm = ctk.CTkFrame(tab_pending)
+                frm.pack(fill="x", padx=10, pady=5)
+                ctk.CTkLabel(frm, text=f"Username: {username}", font=("Arial", 12)).pack(side="left", padx=10)
+                
+                ctk.CTkButton(frm, text="Decline", fg_color="red", width=80, 
+                              command=lambda u=username: update_status(u, "Declined")).pack(side="right", padx=5)
+                ctk.CTkButton(frm, text="Accept", fg_color="green", width=80, 
+                              command=lambda u=username: update_status(u, "Accepted")).pack(side="right", padx=5)
+                              
+            elif status == "Accepted":
+                frm = ctk.CTkFrame(tab_accepted)
+                frm.pack(fill="x", padx=10, pady=5)
+                ctk.CTkLabel(frm, text=f"Username: {username} (Approved)", text_color="green", font=("Arial", 12)).pack(side="left", padx=10)
+                
+            elif status == "Declined":
+                frm = ctk.CTkFrame(tab_declined)
+                frm.pack(fill="x", padx=10, pady=5)
+                ctk.CTkLabel(frm, text=f"Username: {username} (Rejected)", text_color="red", font=("Arial", 12)).pack(side="left", padx=10)
+
+    def update_status(username, new_status):
+        if not os.path.exists(REQUEST_FILE):
+            return
+            
+        with open(REQUEST_FILE, "r") as f:
+            try:
+                accounts = json.load(f)
+            except:
+                accounts = []
+            
+        target_account = None
+        for acc in accounts:
+            if acc["username"] == username:
+                acc["status"] = new_status
+                target_account = acc
+                
+        with open(REQUEST_FILE, "w") as f:
+            json.dump(accounts, f, indent=4)
+            
+        # Kapag in-accept, otomatikong maidaragdag sa users.json para makapag-login ang estudyante
+        if new_status == "Accepted" and target_account:
+            users_data = {}
+            if os.path.exists(USER_FILE):
+                with open(USER_FILE, "r") as f:
+                    try: 
+                        users_data = json.load(f)
+                    except: 
+                        users_data = {}
+            
+            users_data[username] = {"password": target_account["password"], "role": "Student"}
+            with open(USER_FILE, "w") as f:
+                json.dump(users_data, f, indent=4)
+                
+        load_data()
+
+    # Button para i-refresh ang listahan ng mga nagrerehistro[cite: 1, 2]
+    ctk.CTkButton(window, text="Refresh List", fg_color="#1f6aa5", command=load_data).pack(pady=10)
+
+    load_data()
+teacher_dashboard/dialogs.py
+import customtkinter as ctk
+from .network_utils import send_command
+
+def open_text_message_dialog(master):
+    dialog = ctk.CTkToplevel(master)
+    dialog.title("Send Text Message to Students")
+    dialog.geometry("400x250")
+    dialog.attributes("-topmost", True)
+    ctk.CTkLabel(dialog, text="I-type ang mensahe para sa lahat ng estudyante:", font=("Arial", 12, "bold")).pack(pady=15)
+    msg_entry = ctk.CTkTextbox(dialog, width=350, height=100)
+    msg_entry.pack(pady=5)
+
+    def send_msg():
+        message = msg_entry.get("1.0", "end-1c").strip()
+        if message:
+            for ip in master.student_cards.keys():
+                send_command(ip, f"MSG:{message}")
+            dialog.destroy()
+
+    ctk.CTkButton(dialog, text="Broadcast Message", fg_color="green", command=send_msg).pack(pady=15)
+
+def open_single_text_message_dialog(master, ip):
+    dialog = ctk.CTkToplevel(master)
+    dialog.title(f"Send Message to {ip}")
+    dialog.geometry("400x250")
+    dialog.attributes("-topmost", True)
+    ctk.CTkLabel(dialog, text=f"I-type ang mensahe para sa PC ({ip}):", font=("Arial", 12, "bold")).pack(pady=15)
+    msg_entry = ctk.CTkTextbox(dialog, width=350, height=100)
+    msg_entry.pack(pady=5)
+
+    def send_single_msg():
+        message = msg_entry.get("1.0", "end-1c").strip()
+        if message:
+            send_command(ip, f"MSG:{message}")
+            dialog.destroy()
+
+    ctk.CTkButton(dialog, text="Send Message", fg_color="green", command=send_single_msg).pack(pady=15)
+
+def open_website_dialog(master):
+    dialog = ctk.CTkToplevel(master)
+    dialog.title("Open Website on All Students")
+    dialog.geometry("400x200")
+    dialog.attributes("-topmost", True)
+    ctk.CTkLabel(dialog, text="I-type ang URL (hal. https://www.facebook.com):", font=("Arial", 12, "bold")).pack(pady=15)
+    url_entry = ctk.CTkEntry(dialog, width=350, placeholder_text="https://...")
+    url_entry.pack(pady=5)
+
+    def send_url():
+        url = url_entry.get().strip()
+        if url:
+            for ip in master.student_cards.keys():
+                send_command(ip, f"URL:{url}")
+            dialog.destroy()
+
+    ctk.CTkButton(dialog, text="Open Website", fg_color="green", command=send_url).pack(pady=15)
+
+def open_single_website_dialog(master, ip):
+    dialog = ctk.CTkToplevel(master)
+    dialog.title(f"Open Website on {ip}")
+    dialog.geometry("400x200")
+    dialog.attributes("-topmost", True)
+    ctk.CTkLabel(dialog, text=f"I-type ang URL para sa PC ({ip}):", font=("Arial", 12, "bold")).pack(pady=15)
+    url_entry = ctk.CTkEntry(dialog, width=350, placeholder_text="https://...")
+    url_entry.pack(pady=5)
+
+    def send_single_url():
+        url = url_entry.get().strip()
+        if url:
+            send_command(ip, f"URL:{url}")
+            dialog.destroy()
+
+    ctk.CTkButton(dialog, text="Open Website", fg_color="green", command=send_single_url).pack(pady=15)
+teacher_dashboard/history_window.py
+import customtkinter as ctk
+import tkinter.ttk as ttk
+
+def open_history_window(master, login_history_data):
+    history_win = ctk.CTkToplevel(master)
+    history_win.title("Student Login & Logout History")
+    history_win.geometry("750x450")
+   
+    lbl_title = ctk.CTkLabel(history_win, text="Lab User Session History", font=ctk.CTkFont(size=16, weight="bold"))
+    lbl_title.pack(pady=10)
+   
+    table_frame = ctk.CTkFrame(history_win)
+    table_frame.pack(fill="both", expand=True, padx=20, pady=10)
+   
+    columns = ("Name", "IP Address", "Login Time", "Logout Time", "Duration")
+    tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=12)
+   
+    for col in columns:
+        tree.heading(col, text=col)
+        tree.column(col, width=130, anchor="center")
+       
+    tree.pack(side="left", fill="both", expand=True)
+   
+    for item in login_history_data:
+        tree.insert("", "end", values=(item["name"], item["ip"], item["login"], item["logout"], item["duration"]))
+teacher_dashboard/inbox_window.py
+import customtkinter as ctk
+
+def open_inbox_window(master_dashboard):
+    # Siguraduhing walang naiwang lumang inbox window para maiwasan ang conflict
+    if hasattr(master_dashboard, 'current_inbox_win') and master_dashboard.current_inbox_win:
+        try:
+            master_dashboard.current_inbox_win.destroy()
+        except:
+            pass
+
+    inbox_win = ctk.CTkToplevel(master_dashboard)
+    master_dashboard.current_inbox_win = inbox_win  # I-save ang reference para sa real-time refresh
+    
+    inbox_win.title("Teacher's Student Activity Inbox")
+    inbox_win.geometry("600x400")
+    
+    ctk.CTkLabel(inbox_win, text="Real-time Student Activity Inbox", font=("Arial", 16, "bold")).pack(pady=10)
+    
+    # Frame para sa listahan ng mga logs
+    frame = ctk.CTkScrollableFrame(inbox_win, width=550, height=300)
+    frame.pack(pady=10, padx=10, fill="both", expand=True)
+    
+    # Debug print para makita sa terminal ang laman ng data kapag binuksan
+    print(f"[DEBUG INBOX WINDOW] Kasalukuyang laman ng inbox_logs_data: {getattr(master_dashboard, 'inbox_logs_data', [])}")
+    
+    if not hasattr(master_dashboard, 'inbox_logs_data') or not master_dashboard.inbox_logs_data:
+        ctk.CTkLabel(frame, text="Wala pang natatanggap na aktibidad mula sa mga estudyante.", text_color="gray").pack(pady=20)
+    else:
+        for log in reversed(master_dashboard.inbox_logs_data):
+            log_text = f"[{log.get('time', '')}] {log.get('message', '')}"
+            lbl = ctk.CTkLabel(frame, text=log_text, anchor="w", justify="left", font=("Arial", 12))
+            lbl.pack(fill="x", padx=5, pady=2)
+            
+    # Button para mag-clear ng inbox
+    def clear_inbox():
+        if hasattr(master_dashboard, 'inbox_logs_data'):
+            master_dashboard.inbox_logs_data.clear()
+        master_dashboard.current_inbox_win = None
+        inbox_win.destroy()
+        open_inbox_window(master_dashboard)
+
+    # Linisin ang reference kapag pinindot ang 'X' (close) ng window
+    def on_close():
+        master_dashboard.current_inbox_win = None
+        inbox_win.destroy()
+
+    inbox_win.protocol("WM_DELETE_WINDOW", on_close)
+
+    ctk.CTkButton(inbox_win, text="Clear Inbox", fg_color="#d9534f", hover_color="#c9302c", command=clear_inbox).pack(pady=10)
+teacher_dashboard/network_listeners.py
+import socket
+import threading
+import io
+import json
+import os
+from datetime import datetime
+from PIL import Image, ImageTk
+
+LOG_PORT = 5001
+TEACHER_IP = "192.168.100.71"  # Palitan kung iba ang IP ng Teacher PC
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REG_FILE = os.path.abspath(os.path.join(BASE_DIR, "..", "pending_accounts.json"))
+
+def start_log_listener(self):
+    """Tatakbo sa sariling thread para mag-abang ng registrations, logins, expressions, at active window activities sa Port 5001"""
+    log_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    log_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    
+    try:
+        log_server.bind((TEACHER_IP, LOG_PORT))
+        log_server.listen(10)
+        print(f"\n==========================================")
+        print(f"[DEBUG] Log listener ay BUKAS at ACTIVE sa {TEACHER_IP}:{LOG_PORT}")
+        print(f"==========================================\n")
+    except Exception as e:
+        print(f"[ERROR] Hindi ma-bind ang IP/Port {TEACHER_IP}:{LOG_PORT}: {e}")
+        return
+
+    while True:
+        try:
+            conn, addr = log_server.accept()
+            command = conn.recv(2048).decode('utf-8', errors='ignore').strip()
+            
+            if "ACTION: REGISTER" in command:
+                parts = command.split("|")
+                username = ""
+                password = ""
+                
+                for part in parts:
+                    if "USER:" in part:
+                        username = part.split("USER:")[1].strip()
+                    elif "PWD:" in part:
+                        password = part.split("PWD:")[1].strip()
+                
+                if username and password:
+                    data = []
+                    if os.path.exists(REG_FILE):
+                        with open(REG_FILE, "r") as f:
+                            try: data = json.load(f)
+                            except: data = []
+                    
+                    if not any(acc["username"] == username for acc in data):
+                        data.append({"username": username, "password": password, "status": "Pending"})
+                        with open(REG_FILE, "w") as f:
+                            json.dump(data, f, indent=4)
+                        print(f"[SUCCESS] Na-save si {username} sa pending_accounts.json!")
+
+            elif "ACTION: LOGIN" in command or "ACTION: LOGIN_CHECK" in command:
+                parts = command.split("|")
+                username = ""
+                for part in parts:
+                    if "USER:" in part:
+                        username = part.split("USER:")[1].strip()
+                
+                if "ACTION: LOGIN_CHECK" in command:
+                    try:
+                        conn.sendall(b"SUCCESS")
+                    except:
+                        pass
+
+                if username and hasattr(self, 'after'):
+                    self.after(0, lambda u=username, ip=addr[0]: update_student_card_name(self, u, ip))
+            
+            elif "EXPRESSION:" in command:
+                expr_content = command.replace("EXPRESSION:", "").strip()
+                print(f"[STUDENT EXPRESSION] mula {addr[0]}: {expr_content}")
+                if hasattr(self, 'after'):
+                    self.after(0, lambda e=expr_content: handle_student_expression(self, e, addr[0]))
+            
+            elif "ACTIVITY:" in command or "activity:" in command:
+                activity_content = command.replace("ACTIVITY:", "").replace("activity:", "").strip()
+                print(f"[GURO SIDE DEBUG] Natanggap na ACTIVITY mula sa socket -> {activity_content} (IP: {addr[0]})")
+                if hasattr(self, 'after'):
+                    self.after(0, lambda a=activity_content, ip=addr[0]: handle_student_activity(self, a, ip))
+            
+            conn.close()
+        except Exception as e:
+            print(f"[ERROR sa Log Listener]: {e}")
+
+def handle_student_activity(self, activity_text, sender_ip):
+    """Pinoproseso at idinaragdag ang natanggap na activity sa Teacher's Inbox at pinipilit mag-refresh ang UI"""
+    print(f"[STUDENT ACTIVITY ALERT] mula {sender_ip}: {activity_text}")
+    
+    if not hasattr(self, 'inbox_logs_data') or self.inbox_logs_data is None:
+        self.inbox_logs_data = []
+        
+    new_log = {
+        "time": datetime.now().strftime('%H:%M:%S'),
+        "message": f"{activity_text}"
+    }
+    self.inbox_logs_data.append(new_log)
+    print(f"[GURO SIDE DEBUG] Kabuuang naka-save sa inbox_logs_data: {len(self.inbox_logs_data)}")
+
+    if hasattr(self, 'refresh_inbox_ui'):
+        try:
+            self.after(0, self.refresh_inbox_ui)
+        except Exception as e:
+            print(f"[ERROR sa pag-refresh ng Inbox UI]: {e}")
+
+def handle_student_expression(self, expression_text, sender_ip):
+    try:
+        parts = expression_text.split("|")
+        expression = parts[1].strip() if len(parts) >= 2 else expression_text.strip()
+            
+        target_card_info = None
+        if sender_ip in self.student_cards:
+            target_card_info = self.student_cards[sender_ip]
+        else:
+            for key, card_info in self.student_cards.items():
+                if sender_ip in key or (isinstance(card_info, dict) and sender_ip in str(card_info)):
+                    target_card_info = card_info
+                    break
+
+        if target_card_info:
+            target_card_info["expression"] = expression
+            current_name = target_card_info["name"].split(" | [")[0].strip()
+            target_card_info["name"] = f"{current_name} | [{expression}]"
+            
+            if "info_label" in target_card_info and target_card_info["info_label"].winfo_exists():
+                target_card_info["info_label"].configure(text=f"{target_card_info['name']} ({sender_ip})")
+    except Exception as e:
+        print(f"[ERROR parsing expression]: {e}")
+
+def update_student_card_name(self, username, ip):
+    pc_label = f"PC {ip.split('.')[-1]}"
+    display_name = f"{username} - {pc_label}"
+    
+    if ip not in self.student_cards or "frame" not in self.student_cards[ip] or not self.student_cards[ip]["frame"].winfo_exists():
+        from .student_cards import create_student_card
+        create_student_card(self, display_name, ip, len(self.student_cards))
+    else:
+        card_info = self.student_cards[ip]
+        card_info["name"] = display_name
+        if "info_label" in card_info and card_info["info_label"].winfo_exists():
+            card_info["info_label"].configure(text=f"{display_name} ({ip})")
+
+def start_global_listener(self):
+    # 1. Start Log Listener (Port 5001)
+    threading.Thread(target=start_log_listener, args=(self,), daemon=True).start()
+
+    # 2. Main Stream Listener (Port 9998)
+    def handle_client(conn, addr):
+        student_ip = addr[0]
+        self.connected_students[student_ip] = conn
+        display_name = f"User - {student_ip}"
+        
+        try:
+            conn.settimeout(3.0)
+            raw_user_info = conn.recv(128).decode('utf-8', errors='ignore').strip()
+            conn.settimeout(None)
+            
+            if "NAME:" in raw_user_info:
+                parts = raw_user_info.split("NAME:")
+                if len(parts) > 1:
+                    actual_username = parts[1].split("\n")[0].strip()
+                    if actual_username:
+                        display_name = f"{actual_username} - PC {student_ip.split('.')[-1]}"
+        except:
+            conn.settimeout(None)
+
+        clean_username = display_name.split(" - ")[0]
+        self.after(0, lambda u=clean_username, ip=student_ip: update_student_card_name(self, u, ip))
+        self.after(0, lambda: record_login(self, display_name, student_ip))
+        
+        try:
+            while True:
+                raw_length = conn.recv(4)
+                if not raw_length: break
+                frame_length = int.from_bytes(raw_length, byteorder='big')
+                
+                frame_data = b""
+                while len(frame_data) < frame_length:
+                    packet = conn.recv(frame_length - len(frame_data))
+                    if not packet: break
+                    frame_data += packet
+                
+                if len(frame_data) == frame_length:
+                    image = Image.open(io.BytesIO(frame_data)).resize((240, 150), Image.Resampling.LANCZOS)
+                    img_tk = ImageTk.PhotoImage(image)
+                    self.after(0, lambda ip=student_ip, img=img_tk: update_thumbnail_frame(self, ip, img))
+        except Exception as e:
+            print(f"Stream error with {student_ip}: {e}")
+        finally:
+            conn.close()
+            if student_ip in self.connected_students:
+                del self.connected_students[student_ip]
+            
+            def remove_card_ui():
+                if student_ip in self.student_cards:
+                    try:
+                        card_info = self.student_cards[student_ip]
+                        if isinstance(card_info, dict) and "frame" in card_info and card_info["frame"].winfo_exists():
+                            card_info["frame"].destroy()
+                    except:
+                        pass
+                    del self.student_cards[student_ip]
+
+            if hasattr(self, 'after'):
+                self.after(0, remove_card_ui)
+                self.after(0, lambda: record_logout(self, student_ip))
+
+    def stream_listener():
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((TEACHER_IP, 9998))
+        server.listen(10)
+        while True:
+            conn, addr = server.accept()
+            threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
+            
+    threading.Thread(target=stream_listener, daemon=True).start()
+
+    # 3. Remote View Listener (Port 9997)
+    def handle_remote_client(conn, addr):
+        student_ip = addr[0]
+        try:
+            while True:
+                raw_length = conn.recv(4)
+                if not raw_length: break
+                frame_length = int.from_bytes(raw_length, byteorder='big')
+                
+                frame_data = b""
+                while len(frame_data) < frame_length:
+                    packet = conn.recv(frame_length - len(frame_data))
+                    if not packet: break
+                    frame_data += packet
+                
+                if len(frame_data) == frame_length:
+                    image = Image.open(io.BytesIO(frame_data))
+                    img_tk = ImageTk.PhotoImage(image)
+                    
+                    if hasattr(self, 'active_viewers') and student_ip in self.active_viewers:
+                        viewer = self.active_viewers[student_ip]
+                        if viewer.winfo_exists():
+                            viewer.after(0, lambda img=img_tk, v=viewer: v.update_image(img))
+        except Exception as e:
+            print(f"Remote view error for {student_ip}: {e}")
+        finally:
+            conn.close()
+
+    def remote_listener():
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((TEACHER_IP, 9997))
+        server.listen(10)
+        while True:
+            conn, addr = server.accept()
+            threading.Thread(target=handle_remote_client, args=(conn, addr), daemon=True).start()
+
+    threading.Thread(target=remote_listener, daemon=True).start()
+
+def update_thumbnail_frame(self, ip, img_tk):
+    if ip in self.student_cards:
+        lbl = self.student_cards[ip]["preview"]
+        lbl.configure(image=img_tk, text="")
+        lbl.image = img_tk
+
+def record_login(self, name, ip):
+    login_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for item in self.login_history_data:
+        if item["ip"] == ip and item["logout"] == "Active / Online":
+            return
+    self.login_history_data.append({
+        "name": name, "ip": ip, "login": login_time, "logout": "Active / Online", "duration": "-"
+    })
+
+def record_logout(self, ip):
+    logout_time = datetime.now()
+    logout_str = logout_time.strftime("%Y-%m-%d %H:%M:%S")
+    for item in self.login_history_data:
+        if item["ip"] == ip and item["logout"] == "Active / Online":
+            item["logout"] = logout_str
+            login_dt = datetime.strptime(item["login"], "%Y-%m-%d %H:%M:%S")
+            duration_sec = int((logout_time - login_dt).total_seconds())
+            hours, remainder = divmod(duration_sec, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            item["duration"] = f"{hours}h {minutes}m {seconds}s"
+            break
+teacher_dashboard/network_utils.py
+# network_utils.py
+import socket
+
+def send_command(target_student_ip, command):
+    """Para sa LOCK/UNLOCK (Port 5000)"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(2) 
+            s.connect((target_student_ip, 5000))
+            s.sendall(command.encode()) # Tinanggal ang \n para tumugma sa student[cite: 5]
+            print(f"Command '{command}' sent to {target_student_ip}")
+    except Exception as e:
+        print(f"Hindi makakonekta sa student PC {target_student_ip}: {e}")
+
+def send_control_command(target_ip, command):
+    """Para sa Control Commands (Port 9999)[cite: 5]"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(2)
+            s.connect((target_ip, 9999))
+            s.sendall(f"{command}\n".encode())
+            print(f"Control command '{command}' sent to {target_ip}")
+    except Exception as e:
+        print(f"Control command error: {e}")
+teacher_dashboard/screen_receiver.py
+import customtkinter as ctk
+import tkinter as tk
+import threading, io
+import socket
+from datetime import datetime
+from PIL import Image, ImageTk, ImageFile
+from .network_utils import send_control_command
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+class ScreenViewer(ctk.CTkToplevel):
+    def __init__(self, student_ip, control_mode=False):
+        super().__init__()
+        self.student_ip = student_ip
+        self.control_mode = control_mode  # False = Remote View, True = Remote Control
+        
+        mode_title = "Remote Control" if self.control_mode else "Remote View"
+        self.title(f"{mode_title} - {student_ip}")
+        self.attributes("-fullscreen", True)
+        
+        self.latest_image = None
+        self.running = True
+        
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        
+        self.label = tk.Label(self, bg="black")
+        self.label.grid(row=0, column=0, sticky="nsew")
+        
+        # --- TOP CONTROLS OVERLAY ---
+        self.top_control_frame = ctk.CTkFrame(self, fg_color="#1f1f1f", corner_radius=8, border_width=1, border_color="#383838")
+        self.top_control_frame.place(relx=0.97, rely=0.03, anchor="ne")
+
+        self.btn_screenshot = ctk.CTkButton(
+            self.top_control_frame, text="Screenshot", width=90, height=30,
+            fg_color="#383838", hover_color="#505050", command=self.take_screenshot
+        )
+        self.btn_screenshot.pack(side="left", padx=6, pady=6)
+       
+        self.btn_exit = ctk.CTkButton(
+            self.top_control_frame, text="Exit", width=70, height=30,
+            fg_color="#A83232", hover_color="#C84242", command=self.on_closing
+        )
+        self.btn_exit.pack(side="left", padx=(0, 6), pady=6)
+       
+        self.bind("<Escape>", lambda e: self.on_closing())
+        self.label.bind("<Configure>", self.on_resize)
+        
+        if self.control_mode:
+            self.setup_mouse_control()
+            try:
+                send_control_command(self.student_ip, "START_CONTROL")
+            except:
+                pass
+
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def update_image(self, img_tk):
+        """[FIXED]: Tinatanggap na ngayon ang frame na pinapasa ng network_listeners.py mula sa Port 9997"""
+        try:
+            new_width = self.label.winfo_width()
+            new_height = self.label.winfo_height()
+            if new_width > 1 and new_height > 1:
+                pil_image = ImageTk.getimage(img_tk)
+                self.latest_image = pil_image
+                resized_img = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(resized_img)
+                self.label.config(image=photo)
+                self.label.image = photo
+        except Exception as e:
+            print(f"Error sa pag-update ng image sa viewer: {e}")
+
+    def on_resize(self, event):
+        if self.latest_image:
+            try:
+                new_width = self.label.winfo_width()
+                new_height = self.label.winfo_height()
+                if new_width > 1 and new_height > 1:
+                    resized_img = self.latest_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(resized_img)
+                    self.label.config(image=photo)
+                    self.label.image = photo
+            except:
+                pass
+
+    def take_screenshot(self):
+        try:
+            if self.latest_image:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"screenshot_{self.student_ip}_{timestamp}.png"
+                self.latest_image.save(filename)
+                print(f"Screenshot saved as {filename}")
+        except Exception as e:
+            print(f"Error taking screenshot: {e}")
+    def on_closing(self):
+        self.running = False
+        if self.control_mode:
+            try:
+                send_control_command(self.student_ip, "STOP_CONTROL")
+            except:
+                pass
+        self.destroy()
+
+    def setup_mouse_control(self):
+        self.label.bind("<Motion>", self.on_mouse_move)
+        self.label.bind("<B1-Motion>", self.on_mouse_move)
+        self.label.bind("<Button-1>", lambda e: self.send_mouse("CLICK"))
+
+    def on_mouse_move(self, event):
+        if self.control_mode:
+            send_control_command(self.student_ip, f"MOVE:{event.x}:{event.y}")
+
+    def send_mouse(self, command):
+        if self.control_mode:
+            send_control_command(self.student_ip, command)
+teacher_dashboard/student_cards.py
+import customtkinter as ctk
+
+def setup_grid_layout(self):
+    self.grid_frame = ctk.CTkScrollableFrame(self, label_text="Lab Monitoring Grid", height=400)
+    self.grid_frame.pack(fill="both", expand=True, padx=20, pady=10)
+    self.grid_frame.grid_columnconfigure((0, 1, 2), weight=1)
+
+def create_student_card(self, name, ip, index):
+    if ip in self.student_cards:
+        return
+
+    row = index // 3
+    col = index % 3
+
+    # --- STUDENT CARD BOX ---
+    pc_card = ctk.CTkFrame(self.grid_frame, fg_color="#242424", corner_radius=10, border_width=1, border_color="#383838")
+    pc_card.grid(row=row, column=col, padx=12, pady=12, sticky="nsew")
+
+    # --- SCREEN PREVIEW BOX ---
+    screen_preview = ctk.CTkFrame(pc_card, height=160, fg_color="#181818", corner_radius=6)
+    screen_preview.pack(fill="x", padx=10, pady=10)
+    screen_preview.pack_propagate(False)
+   
+    lbl_preview = ctk.CTkLabel(screen_preview, text=f"{name}\n(Waiting for Live Stream...)", text_color="#888888", font=ctk.CTkFont(size=11))
+    lbl_preview.pack(fill="both", expand=True)
+   
+    lbl_preview.bind("<Button-3>", lambda e: self.show_context_menu(e, ip, name))
+    screen_preview.bind("<Button-3>", lambda e: self.show_context_menu(e, ip, name))
+    
+    # --- INFO LABEL ---
+    lbl_info_text = ctk.CTkLabel(pc_card, text=f"{name} ({ip})", font=ctk.CTkFont(size=12, weight="bold"), text_color="#ffffff")
+    lbl_info_text.pack(pady=(0, 10))
+    lbl_info_text.bind("<Button-3>", lambda e: self.show_context_menu(e, ip, name))
+
+    self.student_cards[ip] = {
+        "card": pc_card,
+        "preview": lbl_preview,
+        "info_label": lbl_info_text,
+        "name": name,
+        "expression": "Waiting..."  # Inisyal na state para sa expression tracking
+    }
+teacher_dashboard/student_webcam.py
+import cv2
+import customtkinter as ctk
+from PIL import Image, ImageTk
+import threading
+import time
+import socket
+from deepface import DeepFace
+
+class StudentWebcamOverlay(ctk.CTkToplevel):
+    def __init__(self, master=None, username="Student", teacher_ip="192.168.100.71", log_port=5001):
+        super().__init__(master)
+        self.username = username
+        self.teacher_ip = teacher_ip
+        self.log_port = log_port
+        self.last_sent_time = 0
+        self.last_expression = ""
+        self.current_expression = None
+        
+        self.overrideredirect(True)
+        
+        width = 400
+        height = 300
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        
+        self.normal_x = screen_width - width - 20
+        self.normal_y = screen_height - height - 70
+        
+        self.geometry(f"{width}x{height}+{self.normal_x}+{self.normal_y}")
+        self.attributes("-topmost", True)
+        
+        self.is_maximized = False
+        self.is_minimized = False
+        self.normal_geometry = f"{width}x{height}+{self.normal_x}+{self.normal_y}"
+        
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        
+        # --- VIDEO CONTAINER ---
+        self.video_label = ctk.CTkLabel(self, text="", fg_color="#111111")
+        self.video_label.grid(row=0, column=0, sticky="nsew")
+        
+        self.video_label.bind("<ButtonPress-1>", self.start_move)
+        self.video_label.bind("<B1-Motion>", self.do_move)
+
+        # --- FLOATING CONTROL BUTTONS ---
+        self.btn_frame = ctk.CTkFrame(self, fg_color="#222222", corner_radius=4)
+        self.update_buttons_layout()
+
+        self.min_btn = ctk.CTkButton(self.btn_frame, text="_", width=20, height=18, font=("Arial", 10, "bold"), fg_color="transparent", hover_color="#444444", command=self.toggle_minimize)
+        self.min_btn.pack(side="left", padx=1, pady=1)
+        
+        self.full_btn = ctk.CTkButton(self.btn_frame, text="□", width=20, height=18, font=("Arial", 10, "bold"), fg_color="transparent", hover_color="#444444", command=self.toggle_fullscreen)
+        self.full_btn.pack(side="left", padx=1, pady=1)
+
+        self.cap = cv2.VideoCapture(0)
+        self.running = True
+        
+        self.thread = threading.Thread(target=self.update_video, daemon=True)
+        self.thread.start()
+        
+        self.analysis_thread = threading.Thread(target=self.analyze_emotion_loop, daemon=True)
+        self.analysis_thread.start()
+
+    def update_buttons_layout(self):
+        if self.is_minimized:
+            self.btn_frame.place(relx=0.96, rely=0.92, anchor="se")
+        else:
+            self.btn_frame.place(relx=0.97, rely=0.95, anchor="se")
+
+    def start_move(self, event):
+        if not self.is_maximized:
+            self.x = event.x_root
+            self.y = event.y_root
+
+    def do_move(self, event):
+        if not self.is_maximized:
+            deltax = event.x_root - self.x
+            deltay = event.y_root - self.y
+            x = self.winfo_x() + deltax
+            y = self.winfo_y() + deltay
+            self.geometry(f"+{x}+{y}")
+            self.x = event.x_root
+            self.y = event.y_root
+
+    def toggle_minimize(self):
+        if not self.is_minimized:
+            if not self.is_maximized:
+                self.normal_geometry = self.geometry()
+            
+            mini_w = 160
+            mini_h = 120
+            
+            screen_width = self.winfo_screenwidth()
+            screen_height = self.winfo_screenheight()
+            
+            min_x = screen_width - mini_w - 20
+            min_y = screen_height - mini_h - 70
+            
+            self.geometry(f"{mini_w}x{mini_h}+{min_x}+{min_y}")
+            self.is_minimized = True
+            self.is_maximized = False
+            self.min_btn.configure(text="❐")
+            self.full_btn.configure(text="□")
+            self.update_buttons_layout()
+        else:
+            self.geometry(self.normal_geometry)
+            self.is_minimized = False
+            self.min_btn.configure(text="_")
+            self.update_buttons_layout()
+
+    def toggle_fullscreen(self):
+        if not self.is_minimized:
+            if not self.is_maximized:
+                self.normal_geometry = self.geometry()
+                screen_width = self.winfo_screenwidth()
+                screen_height = self.winfo_screenheight()
+                self.geometry(f"{screen_width}x{screen_height}+0+0")
+                self.is_maximized = True
+                self.full_btn.configure(text="❐")
+                self.update_buttons_layout()
+            else:
+                self.geometry(self.normal_geometry)
+                self.is_maximized = False
+                self.full_btn.configure(text="□")
+                self.update_buttons_layout()
+
+    def send_expression(self, expression):
+        try:
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.settimeout(1.0)
+            client.connect((self.teacher_ip, self.log_port))
+            
+            pc_name = socket.gethostname()
+            msg = f"EXPRESSION: {pc_name} - {self.username} | {expression}"
+            client.sendall(msg.encode('utf-8'))
+            client.close()
+        except Exception as e:
+            print(f"Error sa pagpadala ng expression: {e}")
+
+    def analyze_emotion_loop(self):
+        while self.running:
+            try:
+                ret, frame = self.cap.read()
+                if ret:
+                    analysis = DeepFace.analyze(frame, actions=['emotion'], enforce_detection=True, silent=True)
+                    if isinstance(analysis, list) and len(analysis) > 0:
+                        analysis = analysis[0]
+                        raw_emotion = analysis.get('dominant_emotion', 'neutral')
+                        
+                        emotion_map = {
+                            "happy": "Smiling",
+                            "sad": "Sad",
+                            "angry": "Angry",
+                            "surprise": "Surprised",
+                            "fear": "Fearful",
+                            "disgust": "Disgusted",
+                            "neutral": "Neutral"
+                        }
+                        self.current_expression = emotion_map.get(raw_emotion, raw_emotion.capitalize())
+                    else:
+                        self.current_expression = None
+            except Exception as e:
+                self.current_expression = None
+            
+            time.sleep(2.0)
+
+    def update_video(self):
+        while self.running and self.cap.isOpened():
+            ret, frame = self.cap.read()
+            if not ret:
+                break
+            
+            frame = cv2.flip(frame, 1)
+            
+            current_time = time.time()
+            if self.current_expression and (self.current_expression != self.last_expression or (current_time - self.last_sent_time > 0.5)):
+                threading.Thread(target=self.send_expression, args=(self.current_expression,), daemon=True).start()
+                self.last_expression = self.current_expression
+                self.last_sent_time = current_time
+            
+            try:
+                if not self.winfo_exists():
+                    break
+                width = self.video_label.winfo_width()
+                height = self.video_label.winfo_height()
+                
+                if width > 10 and height > 10:
+                    frame = cv2.resize(frame, (width, height))
+                
+                if self.current_expression:
+                    cv2.putText(frame, f"Emotion: {self.current_expression}", (15, 30), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+                else:
+                    cv2.putText(frame, f"Emotion: No face detected", (15, 30), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+                
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(rgb_frame)
+                imgtk = ImageTk.PhotoImage(image=img)
+                
+                self.video_label.configure(image=imgtk)
+                self.video_label.image = imgtk
+            except Exception:
+                break
+                
+            time.sleep(0.03)
+                
+    def close_camera(self):
+        self.running = False
+        if self.cap.isOpened():
+            self.cap.release()
+        try:
+            self.destroy()
+        except:
+            pass
+teacher_dashboard/teacher_broadcast.py
+import socket
+import threading
+import time
+import struct
+import mss
+import numpy as np
+import cv2
+import pyautogui
+from .network_utils import send_command
+
+def toggle_teacher_broadcast(self):
+    """Veyon-Style Realtime Broadcast Server (Optimized & Non-Blocking)"""
+    def broadcast_server_loop():
+        BROADCAST_PORT = 9996
+        server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+        try:
+            server_sock.bind(('0.0.0.0', BROADCAST_PORT))
+            server_sock.listen(15)
+            server_sock.settimeout(0.5)
+        except Exception as e:
+            print(f"Broadcast bind error: {e}")
+            return
+
+        clients = []
+
+        def accept_clients():
+            while self.is_broadcasting_demo:
+                try:
+                    conn, addr = server_sock.accept()
+                    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    conn.setblocking(False)
+                    clients.append(conn)
+                except socket.timeout:
+                    continue
+                except:
+                    break
+
+        accept_thread = threading.Thread(target=accept_clients, daemon=True)
+        accept_thread.start()
+
+        with mss.mss() as sct:
+            monitor = sct.monitors[1]
+
+            while self.is_broadcasting_demo:
+                loop_start = time.time()
+                try:
+                    img = sct.grab(monitor)
+                    frame = np.array(img)
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+
+                    try:
+                        mouse_x, mouse_y = pyautogui.position()
+                        cv2.circle(frame_bgr, (mouse_x, mouse_y), 14, (0, 0, 255), -1)
+                        cv2.circle(frame_bgr, (mouse_x, mouse_y), 16, (255, 255, 255), 2)
+                    except:
+                        pass
+
+                    frame_resized = cv2.resize(frame_bgr, (1280, 720), interpolation=cv2.INTER_AREA)
+                    _, img_encoded = cv2.imencode('.jpg', frame_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+                    img_data = img_encoded.tobytes()
+                    header = struct.pack("!I", len(img_data))
+                    payload = header + img_data
+
+                    dead_clients = []
+                    for client in clients:
+                        try:
+                            client.sendall(payload)
+                        except:
+                            dead_clients.append(client)
+
+                    for dead in dead_clients:
+                        if dead in clients:
+                            clients.remove(dead)
+                        try:
+                            dead.close()
+                        except:
+                            pass
+
+                except Exception as e:
+                    print(f"Broadcast loop error: {e}")
+
+                elapsed = time.time() - loop_start
+                if elapsed < 0.03:
+                    time.sleep(0.03 - elapsed)
+
+        try:
+            server_sock.close()
+        except:
+            pass
+
+        for client in clients:
+            try:
+                client.close()
+            except:
+                pass
+
+    if not self.is_broadcasting_demo:
+        self.is_broadcasting_demo = True
+        if self.btn_fullscreen_demo:
+            self.btn_fullscreen_demo.configure(text="STOP", fg_color="#a83232", hover_color="#c94444")
+
+        for ip in self.student_cards.keys():
+            send_command(ip, "START_DEMO")
+
+        time.sleep(0.2)
+        threading.Thread(target=broadcast_server_loop, daemon=True).start()
+        print("[DEBUG] Nagsimula na ang na-optimize na Broadcast Server.")
+    else:
+        self.is_broadcasting_demo = False
+        if self.btn_fullscreen_demo:
+            self.btn_fullscreen_demo.configure(text="Fullscreen demo", fg_color="#383838", hover_color="#505050")
+
+        for ip in self.student_cards.keys():
+            send_command(ip, "STOP_DEMO")
+teacher_dashboard/teacher_dash.py
+import customtkinter as ctk
+import tkinter as tk
+import socket
+import threading
+import time
+import struct
+import mss
+import numpy as np
+import cv2
+import pyautogui
+from concurrent.futures import ThreadPoolExecutor
+from PIL import Image
+from .network_utils import send_command
+from .screen_receiver import ScreenViewer
+
+# Import hiwalay na modules mula sa kaparehong folder
+from .history_window import open_history_window
+from .student_cards import setup_grid_layout, create_student_card
+from .network_listeners import start_global_listener as run_global_listener, update_thumbnail_frame, record_login, record_logout
+from .account_approvals import open_account_approvals
+from .inbox_window import open_inbox_window  
+
+class TeacherDashboard(ctk.CTkToplevel):
+    def __init__(self, master_app):
+        super().__init__()
+        self.inbox_logs_data = []
+        self.current_inbox_win = None 
+        self.master_app = master_app
+        self.connected_students = {}
+        self.student_cards = {}
+        self.login_history_data = []
+        self.active_viewers = {}  
+        self.is_broadcasting_demo = False  
+        self.btn_fullscreen_demo = None  
+        self.student_histories = {} 
+        
+        self.title("Teacher Dashboard")
+        self.geometry("1200x800")
+        
+        # --- TOP TOOLBAR ---
+        self.top_toolbar = ctk.CTkFrame(self, height=65, fg_color="#333333", corner_radius=0)
+        self.top_toolbar.pack(side="top", fill="x")
+        
+        toolbar_items = [
+            ("Monitoring", None),
+            ("Fullscreen demo", lambda: self.start_teacher_broadcast()),
+            ("Window demo", None),
+            ("Lock", self.lock_all_students),
+            ("Unlock", self.unlock_all_students),
+            ("Power on", None),
+            ("Reboot", self.reboot_all_students),
+            ("Power down", self.shutdown_all_students),
+            ("Sleep", self.sleep_all_students),
+            ("Logout user", None),
+            ("Text message", self.open_text_message_dialog),
+            ("Run program", None),
+            ("Open website", self.open_website_dialog),
+            ("Inbox", lambda: open_inbox_window(self)), 
+            ("Screenshot", None),
+            ("History", lambda: open_history_window(self, self.login_history_data)),
+            ("Approvals", lambda: open_account_approvals(self)),
+            ("Refresh", self.refresh_connections),
+        ]
+        
+        for btn_text, btn_command in toolbar_items:
+            fg_col = "#1f6aa5" if btn_text in ("Refresh", "Inbox") else "#383838"
+            hover_col = "#144870" if btn_text in ("Refresh", "Inbox") else "#505050"
+            
+            btn = ctk.CTkButton(
+                self.top_toolbar,
+                text=btn_text,
+                image=None,
+                compound="top",
+                width=75,
+                height=50,
+                fg_color=fg_col,
+                hover_color=hover_col,
+                font=ctk.CTkFont(size=10),
+                command=btn_command if btn_command else lambda t=btn_text: print(f"{t} clicked")
+            )
+            btn.pack(side="left", padx=1, pady=5)
+            
+            if btn_text == "Fullscreen demo":
+                self.btn_fullscreen_demo = btn
+
+        # --- TEST BUTTON PARA SA INBOX ---
+        test_inbox_btn = ctk.CTkButton(
+            self.top_toolbar, 
+            text="Test Inbox Log", 
+            fg_color="#b58900", 
+            hover_color="#856300",
+            width=75,
+            height=50,
+            font=ctk.CTkFont(size=10),
+            command=self.add_test_log
+        )
+        test_inbox_btn.pack(side="left", padx=1, pady=5)
+
+        # --- MAIN GRID PARA SA MGA PC NG ESTUDYANTE ---
+        setup_grid_layout(self)
+        
+        run_global_listener(self)
+        self.start_teacher_broadcaster()
+
+        # --- BOTTOM STATUS BAR ---
+        self.bottom_bar = ctk.CTkFrame(self, height=40, fg_color="#2b2b2b", corner_radius=0)
+        self.bottom_bar.pack(side="bottom", fill="x")
+        
+        self.lbl_rooms = ctk.CTkButton(self.bottom_bar, text="Computer rooms", fg_color="transparent", text_color="white", width=100)
+        self.lbl_rooms.pack(side="left", padx=10)
+        
+        self.lbl_screenshots = ctk.CTkButton(self.bottom_bar, text="Screenshots", fg_color="transparent", text_color="white", width=90)
+        self.lbl_screenshots.pack(side="left", padx=5)
+        
+        self.search_entry = ctk.CTkEntry(self.bottom_bar, placeholder_text="Search users and computers", width=220)
+        self.search_entry.pack(side="left", padx=15, pady=5)
+
+    def add_test_log(self):
+        """Pansamantalang function para magdagdag ng dummy log at i-test ang Inbox UI"""
+        import datetime
+        new_log = {
+            "time": datetime.datetime.now().strftime('%H:%M:%S'),
+            "message": "[192.168.1.50] Test Expression: Hello Teacher!"
+        }
+        self.inbox_logs_data.append(new_log)
+        print(f"[DEBUG] Bagong log idinagdag: {new_log}")
+        self.refresh_inbox_ui()
+
+    def refresh_inbox_ui(self):
+        """Kusa nitong nire-refresh ang Inbox window kapag may bagong pumasok na data"""
+        if self.current_inbox_win and self.current_inbox_win.winfo_exists():
+            try:
+                self.current_inbox_win.destroy()
+            except:
+                pass
+            open_inbox_window(self)
+
+    def update_history_ui(self, ip):
+        pass
+
+    def show_notification(self, message):
+        pass
+
+    def start_teacher_broadcast(self):
+        def broadcast_server_loop():
+            BROADCAST_PORT = 9996
+            server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            
+            try:
+                server_sock.bind(('0.0.0.0', BROADCAST_PORT))
+                server_sock.listen(15)
+                server_sock.settimeout(0.5)
+            except Exception as e:
+                print(f"Broadcast bind error: {e}")
+                return
+
+            clients = []
+            
+            def accept_clients():
+                while self.is_broadcasting_demo:
+                    try:
+                        conn, addr = server_sock.accept()
+                        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                        conn.setblocking(False)
+                        clients.append(conn)
+                    except socket.timeout:
+                        continue
+                    except:
+                        break
+
+            accept_thread = threading.Thread(target=accept_clients, daemon=True)
+            accept_thread.start()
+
+            with mss.mss() as sct:
+                monitor = sct.monitors[1]
+                
+                while self.is_broadcasting_demo:
+                    loop_start = time.time()
+                    try:
+                        img = sct.grab(monitor)
+                        frame = np.array(img)
+                        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                        
+                        try:
+                            mouse_x, mouse_y = pyautogui.position()
+                            cv2.circle(frame_bgr, (mouse_x, mouse_y), 14, (0, 0, 255), -1)
+                            cv2.circle(frame_bgr, (mouse_x, mouse_y), 16, (255, 255, 255), 2)
+                        except:
+                            pass
+                        
+                        frame_resized = cv2.resize(frame_bgr, (1280, 720), interpolation=cv2.INTER_AREA)
+                        _, img_encoded = cv2.imencode('.jpg', frame_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+                        img_data = img_encoded.tobytes()
+                        header = struct.pack("!I", len(img_data))
+                        payload = header + img_data
+                        
+                        dead_clients = []
+                        for client in clients:
+                            try:
+                                client.sendall(payload)
+                            except:
+                                dead_clients.append(client)
+                        
+                        for dead in dead_clients:
+                            if dead in clients:
+                                clients.remove(dead)
+                            try:
+                                dead.close()
+                            except:
+                                pass
+                                
+                    except Exception as e:
+                        print(f"Broadcast loop error: {e}")
+                    
+                    elapsed = time.time() - loop_start
+                    if elapsed < 0.03:
+                        time.sleep(0.03 - elapsed)
+            
+            try:
+                server_sock.close()
+            except:
+                pass
+                
+            for client in clients:
+                try:
+                    client.close()
+                except:
+                    pass
+
+        if not self.is_broadcasting_demo:
+            self.is_broadcasting_demo = True
+            if self.btn_fullscreen_demo:
+                self.btn_fullscreen_demo.configure(text="STOP", fg_color="#a83232", hover_color="#c94444")
+            
+            for ip in self.student_cards.keys():
+                send_command(ip, "START_DEMO")
+            
+            time.sleep(0.2)
+            threading.Thread(target=broadcast_server_loop, daemon=True).start()
+            print("[DEBUG] Nagsimula na ang na-optimize na Broadcast Server.")
+        else:
+            self.is_broadcasting_demo = False
+            if self.btn_fullscreen_demo:
+                self.btn_fullscreen_demo.configure(text="Fullscreen demo", fg_color="#383838", hover_color="#505050")
+            
+            for ip in self.student_cards.keys():
+                send_command(ip, "STOP_DEMO")
+
+    def start_teacher_broadcaster(self):
+        pass
+
+    def refresh_connections(self):
+        print("[DEBUG] Nirerefresh ang student cards sa dashboard...")
+        for ip, card_info in list(self.student_cards.items()):
+            try:
+                if isinstance(card_info, dict) and "frame" in card_info:
+                    card_info["frame"].destroy()
+                elif hasattr(card_info, "destroy"):
+                    card_info.destroy()
+            except Exception as e:
+                print(f"Error sa pagbura ng card para sa {ip}: {e}")
+                
+        self.student_cards.clear()
+        self.connected_students.clear()
+        print("[DEBUG] Refresh tapos na.")
+
+    def setup_grid_layout(self):
+        setup_grid_layout(self)
+
+    def create_student_card(self, name, ip, index):
+        create_student_card(self, name, ip, index)
+
+    def update_thumbnail_frame(self, ip, img_tk):
+        update_thumbnail_frame(self, ip, img_tk)
+
+    def show_context_menu(self, event, ip, name):
+        context_menu = tk.Menu(self, tearoff=0, bg="#f0f0f0", fg="black", font=("Arial", 10))
+        context_menu.add_command(label="Remote View", command=lambda: self.open_full_view(ip, is_control=False))
+        
+        if self.is_broadcasting_demo:
+            context_menu.add_command(label="Stop demo", command=lambda: self.start_teacher_broadcast())
+        else:
+            context_menu.add_command(label="Fullscreen demo", command=lambda: self.start_teacher_broadcast())
+            
+        context_menu.add_separator()
+        context_menu.add_command(label="Lock", command=lambda: send_command(ip, "LOCK"))
+        context_menu.add_command(label="Unlock", command=lambda: send_command(ip, "UNLOCK"))
+        context_menu.add_separator()
+        context_menu.add_command(label="Message", command=lambda: self.open_single_text_message_dialog(ip))
+        context_menu.add_separator()
+        context_menu.add_command(label="Open website", command=lambda: self.open_single_website_dialog(ip))
+        context_menu.add_separator()
+        context_menu.add_command(label="Reboot", command=lambda: send_command(ip, "REBOOT"))
+        context_menu.add_command(label="Sleep", command=lambda: send_command(ip, "SLEEP"))
+        context_menu.add_command(label="Power down", command=lambda: send_command(ip, "SHUTDOWN"))
+        context_menu.add_separator()
+        context_menu.add_command(label="Remote Control", command=lambda: self.open_full_view(ip, is_control=True))
+        
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
+
+    def open_text_message_dialog(self):
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Send Text Message to Students")
+        dialog.geometry("400x250")
+        dialog.attributes("-topmost", True)
+        ctk.CTkLabel(dialog, text="I-type ang mensahe para sa lahat ng estudyante:", font=("Arial", 12, "bold")).pack(pady=15)
+        msg_entry = ctk.CTkTextbox(dialog, width=350, height=100)
+        msg_entry.pack(pady=5)
+        
+        def send_msg():
+            message = msg_entry.get("1.0", "end-1c").strip()
+            if message:
+                for ip in self.student_cards.keys():
+                    send_command(ip, f"MSG:{message}")
+                dialog.destroy()
+                
+        ctk.CTkButton(dialog, text="Broadcast Message", fg_color="green", command=send_msg).pack(pady=15)
+
+    def open_single_text_message_dialog(self, ip):
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(f"Send Message to {ip}")
+        dialog.geometry("400x250")
+        dialog.attributes("-topmost", True)
+        ctk.CTkLabel(dialog, text=f"I-type ang mensahe para sa PC ({ip}):", font=("Arial", 12, "bold")).pack(pady=15)
+        msg_entry = ctk.CTkTextbox(dialog, width=350, height=100)
+        msg_entry.pack(pady=5)
+        
+        def send_single_msg():
+            message = msg_entry.get("1.0", "end-1c").strip()
+            if message:
+                send_command(ip, f"MSG:{message}")
+                dialog.destroy()
+                
+        ctk.CTkButton(dialog, text="Send Message", fg_color="green", command=send_single_msg).pack(pady=15)
+
+    def open_website_dialog(self):
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Open Website on All Students")
+        dialog.geometry("400x200")
+        dialog.attributes("-topmost", True)
+        ctk.CTkLabel(dialog, text="I-type ang URL (hal. https://www.facebook.com):", font=("Arial", 12, "bold")).pack(pady=15)
+        url_entry = ctk.CTkEntry(dialog, width=350, placeholder_text="https://...")
+        url_entry.pack(pady=5)
+        
+        def send_url():
+            url = url_entry.get().strip()
+            if url:
+                for ip in self.student_cards.keys():
+                    send_command(ip, f"URL:{url}")
+                dialog.destroy()
+                
+        ctk.CTkButton(dialog, text="Open Website", fg_color="green", command=send_url).pack(pady=15)
+
+    def open_single_website_dialog(self, ip):
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(f"Open Website on {ip}")
+        dialog.geometry("400x200")
+        dialog.attributes("-topmost", True)
+        ctk.CTkLabel(dialog, text=f"I-type ang URL para sa PC ({ip}):", font=("Arial", 12, "bold")).pack(pady=15)
+        url_entry = ctk.CTkEntry(dialog, width=350, placeholder_text="https://...")
+        url_entry.pack(pady=5)
+        
+        def send_single_url():
+            url = url_entry.get().strip()
+            if url:
+                send_command(ip, f"URL:{url}")
+                dialog.destroy()
+                
+        ctk.CTkButton(dialog, text="Open Website", fg_color="green", command=send_single_url).pack(pady=15)
+
+    def open_full_view(self, student_ip, is_control=False):
+        try:
+            if student_ip in self.active_viewers:
+                try:
+                    self.active_viewers[student_ip].destroy()
+                except:
+                    pass
+            
+            viewer = ScreenViewer(student_ip, control_mode=is_control)
+            self.active_viewers[student_ip] = viewer
+            
+            def on_viewer_close():
+                if student_ip in self.active_viewers:
+                    del self.active_viewers[student_ip]
+                viewer.destroy()
+                
+            viewer.protocol("WM_DELETE_WINDOW", on_viewer_close)
+        except Exception as e:
+            print(f"Error sa pagbubukas ng ScreenViewer: {e}")
+
+    def record_login(self, name, ip):
+        record_login(self, name, ip)
+
+    def record_logout(self, ip):
+        record_logout(self, ip)
+
+    def start_global_listener(self):
+        run_global_listener(self)
+
+    def lock_all_students(self):
+        for ip in self.student_cards.keys():
+            send_command(ip, "LOCK")
+
+    def unlock_all_students(self):
+        for ip in self.student_cards.keys():
+            send_command(ip, "UNLOCK")
+
+    def reboot_all_students(self):
+        for ip in self.student_cards.keys():
+            send_command(ip, "REBOOT")
+
+    def shutdown_all_students(self):
+        for ip in self.student_cards.keys():
+            send_command(ip, "SHUTDOWN")
+
+    def sleep_all_students(self):
+        for ip in self.student_cards.keys():
+            send_command(ip, "SLEEP")
+users.json
+{
+    "teacher": {
+        "password": "teacher123",
+        "role": "Teacher"
+    },
+    "admin": {
+        "password": "admin123",
+        "role": "Admin"
+    },
+    "awa": {
+        "password": "awa",
+        "role": "Student"
+    }
+}

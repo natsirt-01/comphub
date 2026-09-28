@@ -1,0 +1,10 @@
+{
+    "teacher_ip": "192.168.100.11",
+    "admin_ip": "192.168.100.9",
+    "log_port": 5001,
+    "listener_port": 5050,
+    "broadcast_port": 9996,
+    "stream_port": 9998,
+    "remote_view_port": 9997,
+    "control_port": 9999
+}
