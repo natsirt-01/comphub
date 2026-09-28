@@ -232,6 +232,8 @@ class LoginApp(ctk.CTk):
             except socket.timeout:
                 continue
             except OSError as error:
+                if getattr(error, "winerror", None) == 10054 or error.errno == 10054:
+                    continue
                 print(f"[LAN discovery] Listener stopped: {error}")
                 break
 

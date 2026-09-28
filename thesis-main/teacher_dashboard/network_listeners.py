@@ -214,16 +214,20 @@ def start_alert_monitoring(self, dashboard):
         if not dashboard.winfo_exists():
             return
         try:
-            admin_ip = get_admin_ip()
-            if not admin_ip:
-                raise OSError("Admin server was not discovered on this LAN.")
-            request = "ACTION: GET_ALERTS | ACTIVE: 1"
-            teacher_id = getattr(self, "current_teacher_user_id", None)
-            if teacher_id and not getattr(dashboard, "is_admin_monitor", False):
-                request += f" | TEACHERID: {teacher_id}"
-            with _socket.create_connection((admin_ip, LOG_PORT), timeout=2) as sock:
-                sock.sendall(request.encode())
-                alerts = _json.loads(sock.recv(65536).decode() or "[]")
+            if getattr(dashboard, "is_admin_monitor", False):
+                from database import db
+                alerts = db.get_alerts_for_admin(active_only=True)
+            else:
+                admin_ip = get_admin_ip()
+                if not admin_ip:
+                    raise OSError("Admin server was not discovered on this LAN.")
+                request = "ACTION: GET_ALERTS | ACTIVE: 1"
+                teacher_id = getattr(self, "current_teacher_user_id", None)
+                if teacher_id:
+                    request += f" | TEACHERID: {teacher_id}"
+                with _socket.create_connection((admin_ip, LOG_PORT), timeout=2) as sock:
+                    sock.sendall(request.encode())
+                    alerts = _json.loads(sock.recv(65536).decode() or "[]")
             alert_ips = {alert.get("ip_address") for alert in alerts if alert.get("ip_address")}
             for ip in list(getattr(dashboard, "student_cards", {})):
                 set_card_restricted(dashboard, ip, ip in alert_ips)
