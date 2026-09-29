@@ -362,6 +362,7 @@ def start_persistent_stream_listeners(self):
         relay_ip = _get_teacher_stream_ip(self, username) if role == "student" else None
         relay_conn = None
         relay_retry_at = 0.0
+        last_relayed_at = 0.0
 
         if hasattr(self, 'after'):
             self.after(0, lambda u=username, ip=student_ip, r=role: update_student_card_name(self, u, ip, r))
@@ -379,6 +380,9 @@ def start_persistent_stream_listeners(self):
                 frame_data = _recv_exact(conn, frame_length)
                 if frame_data is None:
                     break
+                image = Image.open(io.BytesIO(frame_data)).convert("RGB").resize(
+                    (240, 150), Image.Resampling.LANCZOS
+                )
                 if relay_ip:
                     now = time.monotonic()
                     if relay_conn is None and now >= relay_retry_at:
@@ -388,24 +392,25 @@ def start_persistent_stream_listeners(self):
                             relay_conn.sendall(
                                 f"NAME: {username}|ROLE:student|IP:{student_ip}\n".encode("utf-8")
                             )
-                            relay_conn.settimeout(0.25)
+                            relay_conn.settimeout(5.0)
                         except OSError as error:
                             print(f"[monitor relay] Cannot connect to Teacher {relay_ip}: {error}")
                             if relay_conn:
                                 relay_conn.close()
                             relay_conn = None
                             relay_retry_at = now + 2.0
-                    if relay_conn:
+                    if relay_conn and now - last_relayed_at >= 0.08:
                         try:
-                            relay_conn.sendall(raw_length + frame_data)
+                            relay_buffer = io.BytesIO()
+                            image.save(relay_buffer, format="JPEG", quality=65, optimize=True)
+                            relay_frame = relay_buffer.getvalue()
+                            relay_conn.sendall(len(relay_frame).to_bytes(4, "big") + relay_frame)
+                            last_relayed_at = now
                         except OSError as error:
                             print(f"[monitor relay] Stream to Teacher {relay_ip} stopped: {error}")
                             relay_conn.close()
                             relay_conn = None
                             relay_retry_at = time.monotonic() + 2.0
-                image = Image.open(io.BytesIO(frame_data)).convert("RGB").resize(
-                    (240, 150), Image.Resampling.LANCZOS
-                )
                 if hasattr(self, 'after'):
                     self.after(0, lambda ip=student_ip, frame=image, source=conn:
                                update_thumbnail_frame(self, ip, frame, source))
