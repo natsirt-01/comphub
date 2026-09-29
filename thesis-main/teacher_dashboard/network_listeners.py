@@ -188,9 +188,20 @@ def update_thumbnail_frame_for(dashboard, ip, img_tk):
             print(f"[monitor stream] Could not render preview for {ip}: {error}")
 
 
+def _tint_restricted_frame(dashboard, ip, image):
+    card_info = getattr(dashboard, "student_cards", {}).get(ip)
+    if card_info and card_info.get("restricted"):
+        red_overlay = Image.new("RGB", image.size, (198, 40, 40))
+        return Image.blend(image.convert("RGB"), red_overlay, 0.42)
+    return image
+
+
 def update_thumbnail_frame(self, ip, image, source_conn=None):
     if source_conn is not None and self.connected_students.get(ip) is not source_conn:
         return
+    dashboard = getattr(self, "active_teacher_dashboard", None)
+    if dashboard is not None:
+        image = _tint_restricted_frame(dashboard, ip, image)
     img_tk = ImageTk.PhotoImage(image)
     if not hasattr(self, "latest_frames"):
         self.latest_frames = {}
@@ -201,7 +212,6 @@ def update_thumbnail_frame(self, ip, image, source_conn=None):
         self.stream_frame_seen.add(ip)
         print(f"[monitor stream] First frame received from {ip}")
 
-    dashboard = getattr(self, "active_teacher_dashboard", None)
     if dashboard is not None:
         update_thumbnail_frame_for(dashboard, ip, img_tk)
 
@@ -476,13 +486,14 @@ def start_persistent_stream_listeners(self):
                 frame_data = _recv_exact(conn, frame_length)
                 if frame_data is None:
                     break
-                image = Image.open(io.BytesIO(frame_data))
+                image = Image.open(io.BytesIO(frame_data)).convert("RGB")
 
                 dashboard = getattr(self, "active_teacher_dashboard", None)
                 if dashboard and hasattr(dashboard, 'active_viewers') and student_ip in dashboard.active_viewers:
                     viewer = dashboard.active_viewers[student_ip]
                     if viewer.winfo_exists():
-                        viewer.after(0, lambda img=image, v=viewer: v.update_image(img))
+                        image = _tint_restricted_frame(dashboard, student_ip, image)
+                        viewer.queue_image(image)
         except Exception as e:
             print(f"Remote view error for {student_ip}: {e}")
         finally:

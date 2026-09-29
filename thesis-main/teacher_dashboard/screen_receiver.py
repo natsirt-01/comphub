@@ -23,6 +23,9 @@ class ScreenViewer(ctk.CTkToplevel):
         self.focus_force()
         
         self.latest_image = None
+        self.pending_image = None
+        self.pending_image_lock = threading.Lock()
+        self.frame_callback_pending = False
         self.running = True
         
         self.grid_rowconfigure(0, weight=1)
@@ -59,15 +62,36 @@ class ScreenViewer(ctk.CTkToplevel):
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+    def queue_image(self, pil_image):
+        if not self.running:
+            return
+        with self.pending_image_lock:
+            self.pending_image = pil_image
+            if self.frame_callback_pending:
+                return
+            self.frame_callback_pending = True
+        try:
+            self.after(0, self._render_pending_image)
+        except tk.TclError:
+            with self.pending_image_lock:
+                self.pending_image = None
+                self.frame_callback_pending = False
+
+    def _render_pending_image(self):
+        with self.pending_image_lock:
+            pil_image = self.pending_image
+            self.pending_image = None
+            self.frame_callback_pending = False
+        if self.running and pil_image is not None:
+            self.update_image(pil_image)
+
     def update_image(self, pil_image):
-        """Receives a raw PIL image (not a PhotoImage) so the only PhotoImage
-        conversion happens here, once, on the main GUI thread."""
         try:
             new_width = self.label.winfo_width()
             new_height = self.label.winfo_height()
             if new_width > 1 and new_height > 1:
                 self.latest_image = pil_image
-                resized_img = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                resized_img = pil_image.resize((new_width, new_height), Image.Resampling.BILINEAR)
                 photo = ImageTk.PhotoImage(resized_img)
                 self.label.config(image=photo)
                 self.label.image = photo
@@ -80,7 +104,7 @@ class ScreenViewer(ctk.CTkToplevel):
                 new_width = self.label.winfo_width()
                 new_height = self.label.winfo_height()
                 if new_width > 1 and new_height > 1:
-                    resized_img = self.latest_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    resized_img = self.latest_image.resize((new_width, new_height), Image.Resampling.BILINEAR)
                     photo = ImageTk.PhotoImage(resized_img)
                     self.label.config(image=photo)
                     self.label.image = photo
