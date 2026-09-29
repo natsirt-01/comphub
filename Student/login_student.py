@@ -566,6 +566,7 @@ class LoginApp(ctk.CTk):
         self.in_demo_mode = False
         self.admin_ip = None
         self.teacher_ip = None
+        self.window_tracker_started = False
         self.load_users()
         self.blocklist_cache = []
         threading.Thread(target=self.refresh_blocklist_periodically, daemon=True).start()
@@ -573,7 +574,6 @@ class LoginApp(ctk.CTk):
         threading.Thread(target=self.start_server, daemon=True).start()
         threading.Thread(target=self.start_broadcast_listener, daemon=True).start()
         threading.Thread(target=screen_sender.start_control_listener, daemon=True).start()
-        threading.Thread(target=self.track_active_window, daemon=True).start()
         
         header = ctk.CTkFrame(self, fg_color=COLORS["navy_panel"], corner_radius=0, height=92)
         header.pack(fill="x")
@@ -635,28 +635,31 @@ class LoginApp(ctk.CTk):
     def track_active_window(self):
         last_window = ""
         last_restricted = None
+        last_username = ""
         while True:
             try:
+                session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "active_session.json")
+                if not os.path.exists(session_path):
+                    self.after(0, self.clear_restricted_warning)
+                    if last_restricted and last_username:
+                        self.notify_site_alert(last_username, last_restricted[0], last_restricted[1], "CLOSED")
+                    last_restricted = None
+                    last_window = ""
+                    time.sleep(3)
+                    continue
+
+                try:
+                    with open(session_path, "r") as sf:
+                        username_val = json.load(sf).get("username", "Student")
+                except (OSError, ValueError):
+                    username_val = "Student"
+                last_username = username_val
+
                 active_win = gw.getActiveWindow()
                 current_window = active_win.title.strip() if active_win and active_win.title else ""
                 warning = getattr(self, "restricted_warning", None)
                 if warning and warning.winfo_exists() and current_window == warning.title():
-                    current_window = last_restricted[0] if last_restricted else ""
-                username_val = "Student"
-                session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "active_session.json")
-                if os.path.exists(session_path):
-                    try:
-                        with open(session_path, "r") as sf:
-                            username_val = json.load(sf).get("username", "Student")
-                    except (OSError, ValueError):
-                        pass
-                else:
-                    try:
-                        val = self.user_entry.get().strip()
-                        if val:
-                            username_val = val
-                    except Exception:
-                        pass
+                    current_window = ""
 
                 if current_window:
                     restricted_entry = next(
@@ -1002,6 +1005,10 @@ class LoginApp(ctk.CTk):
                 session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "active_session.json")
                 with open(session_path, "w") as f:
                     json.dump(session_data, f)
+
+                if not self.window_tracker_started:
+                    self.window_tracker_started = True
+                    threading.Thread(target=self.track_active_window, daemon=True).start()
 
                 self.notify_teacher("LOGIN", user)
 

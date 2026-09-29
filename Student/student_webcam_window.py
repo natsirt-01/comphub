@@ -8,7 +8,7 @@ import socket
 from ui_utils import COLORS
 
 try:
-    DeepFace = importlib.import_module("deepface").DeepFace
+    from deepface import DeepFace
 except ImportError:
     DeepFace = None
 
