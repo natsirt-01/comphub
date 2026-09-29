@@ -45,27 +45,38 @@ def start_control_listener():
     while True:
         try:
             conn, addr = server.accept()
+            command_buffer = ""
             while True:
-                data = conn.recv(1024).decode()
-                if not data: break
-                
-                commands = data.split("\n")
-                for line in commands:
+                data = conn.recv(1024).decode(errors="ignore")
+                if not data:
+                    break
+                command_buffer += data
+                while "\n" in command_buffer:
+                    line, command_buffer = command_buffer.split("\n", 1)
                     line = line.strip()
                     if not line: continue
                     
                     if line == "START_CONTROL":
                         control_active = True
-                        if on_pov_start:
-                            on_pov_start()
+                        callback = globals().get("on_pov_start")
+                        if callable(callback):
+                            callback()
                     elif line == "STOP_CONTROL":
                         control_active = False
-                        if on_pov_stop:
-                            on_pov_stop()
+                        callback = globals().get("on_pov_stop")
+                        if callable(callback):
+                            callback()
                     elif control_active:
                         if line.startswith("MOVE"):
                             parts = line.split(":")
-                            if len(parts) == 3:
+                            if len(parts) == 5:
+                                screen_width, screen_height = pyautogui.size()
+                                view_width = max(1, int(parts[3]) - 1)
+                                view_height = max(1, int(parts[4]) - 1)
+                                x = round(int(parts[1]) * (screen_width - 1) / view_width)
+                                y = round(int(parts[2]) * (screen_height - 1) / view_height)
+                                pyautogui.moveTo(x, y, duration=0.0)
+                            elif len(parts) == 3:
                                 pyautogui.moveTo(int(parts[1]), int(parts[2]), duration=0.0)
                         elif line == "CLICK":
                             pyautogui.click()

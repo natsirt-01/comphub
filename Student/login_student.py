@@ -659,7 +659,7 @@ class LoginApp(ctk.CTk):
                 current_window = active_win.title.strip() if active_win and active_win.title else ""
                 warning = getattr(self, "restricted_warning", None)
                 if warning and warning.winfo_exists() and current_window == warning.title():
-                    current_window = ""
+                    current_window = last_restricted[0] if last_restricted else last_window
 
                 if current_window:
                     restricted_entry = next(
@@ -795,12 +795,16 @@ class LoginApp(ctk.CTk):
         warn.attributes("-topmost", True)
         warn.resizable(False, False)
         warn.overrideredirect(True)  # removes the title bar entirely, so there's nothing to grab and drag
-        warn.configure(fg_color=COLORS["danger"])
+        warn.configure(fg_color="#c62828")
         ctk.CTkLabel(warn, text="RESTRICTED SITE DETECTED", font=("Arial", 18, "bold"), text_color="white").pack(pady=15)
         ctk.CTkLabel(warn, text=f"Category: {category.upper()}", font=("Arial", 13, "bold"), text_color=COLORS["sky"]).pack()
         ctk.CTkLabel(warn, text=window_text, font=("Arial", 11), text_color="white", wraplength=400).pack(pady=10)
         ctk.CTkLabel(warn, text="This activity has been reported to your teacher.", text_color="white").pack(pady=5)
-        ctk.CTkLabel(warn, text="Close the restricted site to remove this warning.", text_color="white").pack(pady=10)
+        ctk.CTkLabel(
+            warn,
+            text="Close the restricted tab or leave the site to remove this warning.",
+            text_color="white",
+        ).pack(pady=10)
         warn.after(0, self._set_warning_no_activate, warn, previous_foreground)
 
     @staticmethod
