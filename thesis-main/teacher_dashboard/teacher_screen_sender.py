@@ -13,17 +13,18 @@ pyautogui.FAILSAFE = False
 _stop_flag = {"stop": False}
 
 
-def _stream_loop(target_port, teacher_name, fps_delay, resize_dim, quality, include_cursor, send_handshake):
+def _stream_loop(target_port, teacher_name, fps_delay, resize_dim, quality, include_cursor, send_handshake, admin_ip=None):
     while not _stop_flag["stop"]:
+        client = None
         try:
-            admin_ip = get_admin_ip()
-            if not admin_ip:
+            target_ip = admin_ip or get_admin_ip()
+            if not target_ip:
                 time.sleep(2)
                 continue
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            client.connect((admin_ip, target_port))
-            print(f"[DEBUG teacher_stream] Connected successfully to {admin_ip}:{target_port}")
+            client.connect((target_ip, target_port))
+            print(f"[DEBUG teacher_stream] Connected successfully to {target_ip}:{target_port}")
             if send_handshake:
                 client.sendall(f"NAME: {teacher_name}|ROLE:teacher\n".encode('utf-8'))
 
@@ -45,11 +46,17 @@ def _stream_loop(target_port, teacher_name, fps_delay, resize_dim, quality, incl
         except Exception as e:
             print(f"[DEBUG teacher_stream] FAILED to connect to Admin:{target_port} -> {e}")
             time.sleep(2)
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except OSError:
+                    pass
         if _stop_flag["stop"]:
             break
 
 
-def start_teacher_streaming(teacher_name):
+def start_teacher_streaming(teacher_name, admin_ip=None):
     """Call once when TeacherDashboard opens. Streams the teacher's own screen
     to Admin: a thumbnail feed (STREAM_PORT, needs the NAME/ROLE handshake so
     handle_client can identify it) and a remote-view feed (REMOTE_VIEW_PORT,
@@ -58,12 +65,12 @@ def start_teacher_streaming(teacher_name):
     _stop_flag["stop"] = False
     threading.Thread(
         target=_stream_loop,
-        args=(STREAM_PORT, teacher_name, 0.04, (1280, 720), 75, False, True),
+        args=(STREAM_PORT, teacher_name, 0.04, (1280, 720), 75, False, True, admin_ip),
         daemon=True,
     ).start()
     threading.Thread(
         target=_stream_loop,
-        args=(REMOTE_VIEW_PORT, teacher_name, 0.06, (960, 540), 70, True, False),
+        args=(REMOTE_VIEW_PORT, teacher_name, 0.06, (960, 540), 70, True, False, admin_ip),
         daemon=True,
     ).start()
 

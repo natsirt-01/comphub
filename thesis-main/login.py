@@ -906,7 +906,7 @@ class LoginApp(ctk.CTk):
                     dashboard = TeacherDashboard(master_app=self)
                     self.active_teacher_dashboard = dashboard
                     dashboard.protocol("WM_DELETE_WINDOW", lambda: self.on_dashboard_close(dashboard))
-                    start_teacher_streaming(user["full_name"] or user["username"])
+                    start_teacher_streaming(user["full_name"] or user["username"], admin_ip)
 
                 LabSelectionDialog(self, proceed_with_lab)
 
