@@ -84,6 +84,7 @@ def create_occupancy_card(parent, person, row, col, preview_image=None):
                  text_color=COLORS["ink"]).pack(pady=(0, 2))
     ctk.CTkLabel(card, text=f"{role} | {ip_address or pc_name}",
                  font=ctk.CTkFont(size=11), text_color=COLORS["muted"]).pack(pady=(0, 8))
+    return preview_label
 
 
 def set_card_restricted(self, ip, restricted):

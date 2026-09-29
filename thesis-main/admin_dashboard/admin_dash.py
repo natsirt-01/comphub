@@ -161,6 +161,8 @@ class AdminDashboard(ctk.CTkToplevel):
         self.lab_occupancy_frame.grid_columnconfigure((0, 1, 2), weight=1)
         self.selected_lab = None
         self.lab_refresh_after = None
+        self.lab_frame_after = None
+        self.lab_occupancy_cards = {}
 
         # --- Inventory Tab ---
         inv_tab = tabview.tab("Inventory")
@@ -341,22 +343,56 @@ class AdminDashboard(ctk.CTkToplevel):
         lab_id, lab_name = self.selected_lab
         self.lab_occupancy_label.configure(text=f"{lab_name} — Currently Occupied")
 
-        for widget in self.lab_occupancy_frame.winfo_children():
-            widget.destroy()
-
         occupants = db.get_lab_occupancy(lab_id)
         if not occupants:
-            ctk.CTkLabel(self.lab_occupancy_frame, text="No one is currently in this lab.",
-                        text_color="gray").pack(pady=20)
+            if self.lab_occupancy_cards or not self.lab_occupancy_frame.winfo_children():
+                for widget in self.lab_occupancy_frame.winfo_children():
+                    widget.destroy()
+                self.lab_occupancy_cards.clear()
+                ctk.CTkLabel(self.lab_occupancy_frame, text="No one is currently in this lab.",
+                            text_color="gray").pack(pady=20)
         else:
-            for index, person in enumerate(occupants):
-                ip_address = person.get("ip_address")
-                preview_image = getattr(self.master_app, "latest_frames", {}).get(ip_address)
-                create_occupancy_card(self.lab_occupancy_frame, person, index // 3, index % 3, preview_image)
+            occupant_keys = [person.get("id") for person in occupants]
+            if set(occupant_keys) != set(self.lab_occupancy_cards):
+                for widget in self.lab_occupancy_frame.winfo_children():
+                    widget.destroy()
+                self.lab_occupancy_cards.clear()
+                for index, person in enumerate(occupants):
+                    ip_address = person.get("ip_address")
+                    preview = create_occupancy_card(
+                        self.lab_occupancy_frame, person, index // 3, index % 3
+                    )
+                    self.lab_occupancy_cards[person.get("id")] = {
+                        "ip": ip_address,
+                        "preview": preview,
+                        "placeholder": f"{person.get('role', 'student').capitalize()} PC\n{person.get('pc_name') or 'Unidentified PC'}",
+                    }
+            self.refresh_lab_frames()
 
         if self.lab_refresh_after:
             self.after_cancel(self.lab_refresh_after)
         self.lab_refresh_after = self.after(5000, self.refresh_lab_occupancy)
+
+    def refresh_lab_frames(self):
+        if not self.winfo_exists() or self.selected_lab is None:
+            return
+
+        latest_frames = getattr(self.master_app, "latest_frames", {})
+        for card in self.lab_occupancy_cards.values():
+            preview = card["preview"]
+            if not preview.winfo_exists():
+                continue
+            image = latest_frames.get(card["ip"])
+            if image is None:
+                preview.configure(image=None, text=card["placeholder"])
+                preview.image = None
+            else:
+                preview.configure(image=image, text="")
+                preview.image = image
+
+        if self.lab_frame_after:
+            self.after_cancel(self.lab_frame_after)
+        self.lab_frame_after = self.after(150, self.refresh_lab_frames)
 
     def refresh_blocking_rules(self):
         for widget in self.blocking_rules_frame.winfo_children():

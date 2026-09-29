@@ -1,6 +1,7 @@
 import socket
 import threading
 import io
+import time
 from datetime import datetime
 from PIL import Image, ImageTk
 
@@ -267,18 +268,28 @@ def record_logout(self, ip):
 
 
 def _parse_handshake(raw_user_info, fallback_ip):
-    """Returns (username, role) parsed from 'NAME: x|ROLE:y' or 'NAME: x'."""
-    username = f"User-{fallback_ip}"
-    role = "student"
-    if "NAME:" in raw_user_info:
-        after_name = raw_user_info.split("NAME:", 1)[1]
-        if "|ROLE:" in after_name:
-            name_part, role_part = after_name.split("|ROLE:", 1)
-            username = name_part.strip() or username
-            role = role_part.strip().lower() or "student"
-        else:
-            username = after_name.split("\n")[0].strip() or username
-    return username, role
+    """Returns (username, role, source_ip) from a stream handshake."""
+    fields = {}
+    for part in raw_user_info.split("|"):
+        if ":" in part:
+            key, value = part.split(":", 1)
+            fields[key.strip().upper()] = value.strip()
+    username = fields.get("NAME") or f"User-{fallback_ip}"
+    role = fields.get("ROLE", "student").lower()
+    source_ip = fields.get("IP", fallback_ip)
+    return username, role, source_ip
+
+
+def _get_teacher_stream_ip(self, username):
+    if not getattr(self, "is_admin_node", False):
+        return None
+    from database import db as _db
+
+    student = _db.get_user_by_username(username)
+    if not student or student.get("role") != "student":
+        return None
+    entry = getattr(self, "online_teachers", {}).get(student.get("lab_id"))
+    return entry.get("ip_address") if entry else None
 
 
 def _read_handshake(conn, limit=128):
@@ -328,20 +339,29 @@ def start_persistent_stream_listeners(self):
         self.ip_to_username = {}
 
     def handle_client(conn, addr):
-        student_ip = addr[0]
-        self.connected_students[student_ip] = conn
-
-        username = f"User-{student_ip}"
+        peer_ip = addr[0]
+        student_ip = peer_ip
+        username = f"User-{peer_ip}"
         role = "student"
         try:
             conn.settimeout(3.0)
             raw_user_info = _read_handshake(conn)
             conn.settimeout(None)
-            username, role = _parse_handshake(raw_user_info, student_ip)
+            username, role, source_ip = _parse_handshake(raw_user_info, peer_ip)
+            if source_ip != peer_ip and (
+                getattr(self, "is_admin_node", False)
+                or peer_ip == getattr(self, "admin_ip", None)
+            ):
+                student_ip = source_ip
         except Exception:
             conn.settimeout(None)
+        self.connected_students[student_ip] = conn
         self.handshake_roles[student_ip] = role
         print(f"[monitor stream] Accepted {role} '{username}' from {student_ip} on TCP 9998")
+
+        relay_ip = _get_teacher_stream_ip(self, username) if role == "student" else None
+        relay_conn = None
+        relay_retry_at = 0.0
 
         if hasattr(self, 'after'):
             self.after(0, lambda u=username, ip=student_ip, r=role: update_student_card_name(self, u, ip, r))
@@ -359,6 +379,30 @@ def start_persistent_stream_listeners(self):
                 frame_data = _recv_exact(conn, frame_length)
                 if frame_data is None:
                     break
+                if relay_ip:
+                    now = time.monotonic()
+                    if relay_conn is None and now >= relay_retry_at:
+                        try:
+                            relay_conn = socket.create_connection((relay_ip, 9998), timeout=1.0)
+                            relay_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                            relay_conn.sendall(
+                                f"NAME: {username}|ROLE:student|IP:{student_ip}\n".encode("utf-8")
+                            )
+                            relay_conn.settimeout(0.25)
+                        except OSError as error:
+                            print(f"[monitor relay] Cannot connect to Teacher {relay_ip}: {error}")
+                            if relay_conn:
+                                relay_conn.close()
+                            relay_conn = None
+                            relay_retry_at = now + 2.0
+                    if relay_conn:
+                        try:
+                            relay_conn.sendall(raw_length + frame_data)
+                        except OSError as error:
+                            print(f"[monitor relay] Stream to Teacher {relay_ip} stopped: {error}")
+                            relay_conn.close()
+                            relay_conn = None
+                            relay_retry_at = time.monotonic() + 2.0
                 image = Image.open(io.BytesIO(frame_data)).convert("RGB").resize(
                     (240, 150), Image.Resampling.LANCZOS
                 )
@@ -369,6 +413,8 @@ def start_persistent_stream_listeners(self):
             print(f"Stream error with {student_ip}: {e}")
         finally:
             conn.close()
+            if relay_conn:
+                relay_conn.close()
             is_current_connection = self.connected_students.get(student_ip) is conn
             if is_current_connection:
                 del self.connected_students[student_ip]
