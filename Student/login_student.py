@@ -1013,7 +1013,6 @@ class LoginApp(ctk.CTk):
                 self.notify_teacher("LOGIN", user)
 
                 self.teacher_ip = teacher_ip
-                threading.Thread(target=screen_sender.start_stream, args=(teacher_ip,), daemon=True).start()
                 threading.Thread(target=screen_sender.start_admin_stream, args=(self.admin_ip,), daemon=True).start()
                 threading.Thread(target=screen_sender.start_live_monitoring, args=(teacher_ip,), daemon=True).start()
                 threading.Thread(target=screen_sender.start_live_monitoring, args=(self.admin_ip, True), daemon=True).start()
