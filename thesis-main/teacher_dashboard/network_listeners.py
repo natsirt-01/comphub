@@ -227,12 +227,12 @@ def start_alert_monitoring(self, dashboard):
         try:
             if getattr(dashboard, "is_admin_monitor", False):
                 from database import db
-                alerts = db.get_alerts_for_admin(active_only=True)
+                alerts = db.get_alerts_for_admin(unacknowledged_only=False, active_only=True)
             else:
                 admin_ip = get_admin_ip()
                 if not admin_ip:
                     raise OSError("Admin server was not discovered on this LAN.")
-                request = "ACTION: GET_ALERTS | ACTIVE: 1"
+                request = "ACTION: GET_ALERTS | ACTIVE: 1 | UNACKED: 0"
                 teacher_id = getattr(self, "current_teacher_user_id", None)
                 if teacher_id:
                     request += f" | TEACHERID: {teacher_id}"

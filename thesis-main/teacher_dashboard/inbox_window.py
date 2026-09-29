@@ -1,6 +1,7 @@
 import customtkinter as ctk
 import json
 import socket
+import threading
 from network_config import LOG_PORT, get_admin_ip
 from ui_utils import center_window
 from config import COLORS
@@ -9,20 +10,20 @@ from .date_filters import matches_date_range, parse_date_range
 
 def _fetch_alerts(master_dashboard):
     teacher_id = getattr(master_dashboard.master_app, 'current_teacher_user_id', None)
-    request = "ACTION: GET_ALERTS"
+    request = "ACTION: GET_ALERTS | ACTIVE: 1"
     if teacher_id:
         request += f" | TEACHERID: {teacher_id}"
     try:
         admin_ip = get_admin_ip()
         if not admin_ip:
-            return []
+            return None
         with socket.create_connection((admin_ip, LOG_PORT), timeout=5) as client:
             client.sendall(request.encode())
             response = client.recv(65536).decode()
         return json.loads(response) if response else []
     except (OSError, ValueError) as error:
         print(f"[ERROR fetching alerts from admin]: {error}")
-        return []
+        return None
 
 
 def _acknowledge_alert(alert_id):
@@ -65,7 +66,7 @@ def open_inbox_window(master_dashboard):
     frame = ctk.CTkScrollableFrame(inbox_win, width=550, height=320)
     frame.pack(pady=10, padx=10, fill="both", expand=True)
 
-    alerts = _fetch_alerts(master_dashboard)
+    alerts = _fetch_alerts(master_dashboard) or []
 
     def render_items():
         for widget in frame.winfo_children():
@@ -107,6 +108,35 @@ def open_inbox_window(master_dashboard):
     )).pack(side="left", padx=6)
 
     render_items()
+
+    refresh_state = {"running": False}
+
+    def refresh_alerts():
+        if not inbox_win.winfo_exists():
+            return
+        if not refresh_state["running"]:
+            refresh_state["running"] = True
+
+            def fetch_in_background():
+                refreshed = _fetch_alerts(master_dashboard)
+
+                def apply_refresh():
+                    refresh_state["running"] = False
+                    if not inbox_win.winfo_exists() or refreshed is None:
+                        return
+                    if refreshed != alerts:
+                        alerts[:] = refreshed
+                        render_items()
+
+                try:
+                    inbox_win.after(0, apply_refresh)
+                except Exception:
+                    refresh_state["running"] = False
+
+            threading.Thread(target=fetch_in_background, daemon=True).start()
+        inbox_win.after(1500, refresh_alerts)
+
+    inbox_win.after(1500, refresh_alerts)
 
     def clear_inbox():
         if hasattr(master_dashboard, 'inbox_logs_data'):

@@ -5,6 +5,7 @@ from teacher_dashboard.network_utils import send_command
 import tkinter as tk
 from tkinter import messagebox
 from teacher_dashboard.network_listeners import hydrate_dashboard, start_alert_monitoring
+from teacher_dashboard.inbox_window import open_inbox_window
 from teacher_dashboard.student_cards import create_occupancy_card
 from teacher_dashboard.date_filters import matches_date_range, parse_date_range
 from teacher_dashboard.screen_receiver import ScreenViewer
@@ -32,6 +33,9 @@ class AdminDashboard(ctk.CTkToplevel):
                     command=self.restart_all).pack(side="left", padx=5, pady=12)
         ctk.CTkButton(top_bar, text="Shutdown All", fg_color=COLORS["danger"], hover_color=COLORS["pink_hover"], width=110,
                     command=self.shutdown_all).pack(side="left", padx=5, pady=12)
+
+        ctk.CTkButton(top_bar, text="Inbox", fg_color=COLORS["blue"], hover_color=COLORS["blue_hover"], width=90,
+                command=lambda: open_inbox_window(self)).pack(side="right", padx=(5, 10), pady=12)
 
         # Right side Logout button
         ctk.CTkButton(top_bar, text="Logout", fg_color=COLORS["danger"], hover_color=COLORS["pink_hover"], width=100,
@@ -548,16 +552,16 @@ class AdminDashboard(ctk.CTkToplevel):
         try:
             if student_ip in self.active_viewers:
                 try:
-                    self.active_viewers[student_ip].destroy()
+                    self.active_viewers[student_ip].on_closing()
                 except Exception:
                     pass
             viewer = ScreenViewer(student_ip, control_mode=is_control)
             self.active_viewers[student_ip] = viewer
 
             def on_viewer_close():
-                if student_ip in self.active_viewers:
+                if self.active_viewers.get(student_ip) is viewer:
                     del self.active_viewers[student_ip]
-                viewer.destroy()
+                viewer.on_closing()
 
             viewer.protocol("WM_DELETE_WINDOW", on_viewer_close)
         except Exception as e:

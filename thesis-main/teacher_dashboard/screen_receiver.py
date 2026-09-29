@@ -2,9 +2,10 @@ import customtkinter as ctk
 import tkinter as tk
 import threading, io
 import socket
+import queue
 from datetime import datetime
 from PIL import Image, ImageTk, ImageFile
-from .network_utils import send_control_command
+from network_config import CONTROL_PORT
 from config import COLORS
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -27,6 +28,9 @@ class ScreenViewer(ctk.CTkToplevel):
         self.pending_image_lock = threading.Lock()
         self.frame_callback_pending = False
         self.running = True
+        self.control_commands = queue.Queue(maxsize=32)
+        self.pending_mouse_position = None
+        self.mouse_update_after = None
         
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -55,10 +59,8 @@ class ScreenViewer(ctk.CTkToplevel):
         
         if self.control_mode:
             self.setup_mouse_control()
-            try:
-                send_control_command(self.student_ip, "START_CONTROL")
-            except:
-                pass
+            threading.Thread(target=self._control_sender_loop, daemon=True).start()
+            self._queue_control_command("START_CONTROL")
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -121,12 +123,9 @@ class ScreenViewer(ctk.CTkToplevel):
         except Exception as e:
             print(f"Error taking screenshot: {e}")
     def on_closing(self):
-        self.running = False
         if self.control_mode:
-            try:
-                send_control_command(self.student_ip, "STOP_CONTROL")
-            except:
-                pass
+            self._queue_control_command("STOP_CONTROL")
+        self.running = False
         self.destroy()
 
     def setup_mouse_control(self):
@@ -135,8 +134,63 @@ class ScreenViewer(ctk.CTkToplevel):
         self.label.bind("<Button-1>", lambda e: self.send_mouse("CLICK"))
 
     def on_mouse_move(self, event):
-        if self.control_mode:
-            send_control_command(self.student_ip, f"MOVE:{event.x}:{event.y}")
+        if not self.control_mode:
+            return
+        self.pending_mouse_position = (event.x, event.y)
+        if self.mouse_update_after is None:
+            self.mouse_update_after = self.after(16, self._flush_mouse_position)
+
+    def _flush_mouse_position(self):
+        self.mouse_update_after = None
+        if not self.control_mode or not self.running or self.pending_mouse_position is None:
+            return
+        x, y = self.pending_mouse_position
+        self.pending_mouse_position = None
+        view_width = max(1, self.label.winfo_width())
+        view_height = max(1, self.label.winfo_height())
+        x = max(0, min(x, view_width - 1))
+        y = max(0, min(y, view_height - 1))
+        self._queue_control_command(f"MOVE:{x}:{y}:{view_width}:{view_height}")
+
+    def _queue_control_command(self, command):
+        try:
+            self.control_commands.put_nowait(command)
+        except queue.Full:
+            if command.startswith("MOVE:"):
+                return
+            try:
+                self.control_commands.get_nowait()
+                self.control_commands.put_nowait(command)
+            except queue.Empty:
+                pass
+            except queue.Full:
+                pass
+
+    def _control_sender_loop(self):
+        control_socket = None
+        while self.running or not self.control_commands.empty():
+            try:
+                command = self.control_commands.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                if control_socket is None:
+                    control_socket = socket.create_connection(
+                        (self.student_ip, CONTROL_PORT), timeout=1.0
+                    )
+                    control_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    control_socket.settimeout(None)
+                    if command != "START_CONTROL":
+                        control_socket.sendall(b"START_CONTROL\n")
+                control_socket.sendall(f"{command}\n".encode())
+            except OSError:
+                if control_socket is not None:
+                    control_socket.close()
+                control_socket = None
+            finally:
+                self.control_commands.task_done()
+        if control_socket is not None:
+            control_socket.close()
 
     def send_mouse(self, command):
         if self.control_mode:

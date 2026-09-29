@@ -82,41 +82,23 @@ def send_student_logout(username):
         print(f"[DEBUG student logout] Cannot notify Admin: {error}")
 
 
-def _visible_window_titles(excluded_hwnd=None):
-    if not hasattr(ctypes, "windll"):
-        return []
-    user32 = ctypes.windll.user32
-    titles = []
-    enum_windows = user32.EnumWindows
-    enum_windows.argtypes = [ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p), ctypes.c_void_p]
-    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-
-    def collect(hwnd, _lparam):
-        if hwnd == excluded_hwnd or not user32.IsWindowVisible(hwnd):
-            return True
-        length = user32.GetWindowTextLengthW(hwnd)
-        title = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, title, length + 1)
-        if title.value.strip():
-            titles.append(title.value.strip())
-        return True
-
-    enum_windows(callback_type(collect), 0)
-    return titles
-
-
-def _foreground_window_title():
-    """Return only the title of the currently active window/tab."""
+def _window_title(hwnd):
     if not hasattr(ctypes, "windll"):
         return ""
     user32 = ctypes.windll.user32
-    hwnd = user32.GetForegroundWindow()
     if not hwnd:
         return ""
     length = user32.GetWindowTextLengthW(hwnd)
     title = ctypes.create_unicode_buffer(length + 1)
     user32.GetWindowTextW(hwnd, title, length + 1)
     return title.value.strip()
+
+
+def _foreground_window():
+    if not hasattr(ctypes, "windll"):
+        return None, ""
+    hwnd = ctypes.windll.user32.GetForegroundWindow()
+    return hwnd, _window_title(hwnd)
 
 
 def _fetch_blocklist():
@@ -166,29 +148,30 @@ def _start_site_detection(master, username):
     if not blocklist:
         return
 
-    state = {"matched": None, "warning": None}
+    state = {"matched": None, "matched_hwnd": None, "warning": None}
 
     def poll():
-        title = _foreground_window_title()
+        hwnd, title = _foreground_window()
         warning = state["warning"]
-        if warning is not None and warning.winfo_exists() and title == warning.title():
-            previous_keyword = state["matched"][1] if state["matched"] else ""
-            title = next(
-                (candidate for candidate in _visible_window_titles(warning.winfo_id())
-                 if previous_keyword and previous_keyword.lower() in candidate.lower()),
-                "",
-            )
+        matched_hwnd = state["matched_hwnd"]
+        if matched_hwnd is not None:
+            matched_title = _window_title(matched_hwnd)
+            if matched_title:
+                hwnd, title = matched_hwnd, matched_title
+            elif warning is not None and warning.winfo_exists() and hwnd == warning.winfo_id():
+                hwnd, title = None, ""
         match = next(
             ((entry["keyword"], entry["category"]) for entry in blocklist
              if entry.get("keyword", "").lower() in title.lower()),
             None,
         ) if title else None
         if match:
-            current_match = (title, match[0])
+            current_match = (hwnd, title, match[0])
             if state["matched"] != current_match:
                 if state["matched"] is not None:
-                    _send_site_alert(username, state["matched"][0], "", "CLOSED")
-                state["matched"] = (title, match[0])
+                    _send_site_alert(username, state["matched"][1], "", "CLOSED")
+                state["matched"] = current_match
+                state["matched_hwnd"] = hwnd
                 _send_site_alert(username, title, match[1], "OPEN")
             if (state["warning"] is None or not state["warning"].winfo_exists()
                     or state["warning"].site_text != title):
@@ -196,8 +179,9 @@ def _start_site_detection(master, username):
                     state["warning"].destroy()
                 state["warning"] = RestrictedSiteWarning(master, title, match[1], True)
         elif state["matched"] is not None:
-            _send_site_alert(username, state["matched"][0], "", "CLOSED")
+            _send_site_alert(username, state["matched"][1], "", "CLOSED")
             state["matched"] = None
+            state["matched_hwnd"] = None
             if state["warning"] is not None and state["warning"].winfo_exists():
                 state["warning"].destroy()
             state["warning"] = None

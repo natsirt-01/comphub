@@ -375,7 +375,7 @@ class TeacherDashboard(ctk.CTkToplevel):
         try:
             if student_ip in self.active_viewers:
                 try:
-                    self.active_viewers[student_ip].destroy()
+                    self.active_viewers[student_ip].on_closing()
                 except:
                     pass
             
@@ -383,9 +383,9 @@ class TeacherDashboard(ctk.CTkToplevel):
             self.active_viewers[student_ip] = viewer
             
             def on_viewer_close():
-                if student_ip in self.active_viewers:
+                if self.active_viewers.get(student_ip) is viewer:
                     del self.active_viewers[student_ip]
-                viewer.destroy()
+                viewer.on_closing()
                 
             viewer.protocol("WM_DELETE_WINDOW", on_viewer_close)
         except Exception as e:

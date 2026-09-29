@@ -418,12 +418,22 @@ class LoginApp(ctk.CTk):
         try:
             teacher_id = None
             active_only = "ACTIVE: 1" in data
+            unacknowledged_only = "UNACKED: 0" not in data
             for part in data.split("|"):
                 if "TEACHERID:" in part:
                     value = part.split("TEACHERID:", 1)[1].strip()
                     teacher_id = int(value) if value.isdigit() else None
-            alerts = (db.get_alerts_for_teacher(teacher_id, active_only=active_only)
-                      if teacher_id else db.get_alerts_for_admin(active_only=active_only))
+            alerts = (
+                db.get_alerts_for_teacher(
+                    teacher_id,
+                    unacknowledged_only=unacknowledged_only,
+                    active_only=active_only,
+                )
+                if teacher_id else db.get_alerts_for_admin(
+                    unacknowledged_only=unacknowledged_only,
+                    active_only=active_only,
+                )
+            )
             conn.send(json.dumps(alerts).encode())
         except Exception as e:
             print(f"[ERROR sa get_alerts]: {e}")
