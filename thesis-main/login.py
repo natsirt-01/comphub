@@ -157,7 +157,8 @@ class LoginApp(ctk.CTk):
                 elif "ACTION: LOGOUT" in data:
                     self.handle_student_logout_event(data, addr)
                 elif "ACTION: TEACHER_ONLINE" in data:
-                    self.handle_teacher_online(data, addr[0])
+                    accepted = self.handle_teacher_online(data, addr[0])
+                    conn.sendall(b"SUCCESS" if accepted else b"FAILED")
                     conn.close()
                 elif "ACTION: TEACHER_OFFLINE" in data:
                     self.handle_teacher_offline(data)
@@ -202,9 +203,9 @@ class LoginApp(ctk.CTk):
                         self.active_teacher_dashboard.inbox_logs_data.append(new_log)
                         
                         # I-refresh ang UI ng Inbox at Student Card nang sabay
-                        self.active_teacher_dashboard.after(
-                            0, lambda: self.active_teacher_dashboard.refresh_inbox_ui()
-                        )
+                        dashboard = self.active_teacher_dashboard
+                        if hasattr(dashboard, "refresh_inbox_ui"):
+                            dashboard.after(0, dashboard.refresh_inbox_ui)
                         self.active_teacher_dashboard.after(
                             0, lambda e=expr_content, ip=addr[0]: handle_student_expression(self.active_teacher_dashboard, e, ip)
                         )
@@ -243,6 +244,9 @@ class LoginApp(ctk.CTk):
 
     def handle_teacher_online(self, data, teacher_ip=""):
         try:
+            if not self.is_admin_node:
+                return False
+
             teacher_id_str = lab_id_str = pc_name = ""
             for part in data.split("|"):
                 if "TEACHERID:" in part:
@@ -255,6 +259,10 @@ class LoginApp(ctk.CTk):
             if teacher_id_str.isdigit() and lab_id_str.isdigit():
                 teacher_id = int(teacher_id_str)
                 lab_id = int(lab_id_str)
+                teacher = db.get_user_by_id(teacher_id)
+                if (not teacher or teacher["role"] != "teacher"
+                        or lab_id not in {lab["id"] for lab in db.get_all_labs()}):
+                    return False
 
                 # Admin's own database is the single source of truth: create the
                 # real session row HERE, not on the teacher's own machine.
@@ -273,8 +281,11 @@ class LoginApp(ctk.CTk):
                 self.online_teachers[lab_id] = entry
                 self.teacher_ips_by_lab[lab_id] = teacher_ip
                 print(f"[DEBUG] Teacher {teacher_id} is now ONLINE in lab {lab_id} (session {session_id})")
+                return True
+            return False
         except Exception as e:
             print(f"[ERROR handle_teacher_online]: {e}")
+            return False
 
     def handle_teacher_offline(self, data):
         try:
@@ -291,30 +302,26 @@ class LoginApp(ctk.CTk):
         except Exception as e:
             print(f"[ERROR handle_teacher_offline]: {e}")
 
-    def _notify_admin_teacher_online(self, teacher_id, lab_id):
+    def _notify_admin_teacher_online(self, admin_ip, teacher_id, lab_id):
         try:
-            admin_ip = discover_admin_ip(timeout=3)
-            if not admin_ip:
-                raise OSError("Admin server was not discovered on this LAN.")
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(3)
-            s.connect((admin_ip, 5001))
             pc_name = socket.gethostname()
-            s.sendall(f"ACTION: TEACHER_ONLINE | TEACHERID: {teacher_id} | LABID: {lab_id} | PCNAME: {pc_name}".encode())
-            s.close()
+            with socket.create_connection((admin_ip, 5001), timeout=3) as client:
+                client.sendall(
+                    f"ACTION: TEACHER_ONLINE | TEACHERID: {teacher_id} | "
+                    f"LABID: {lab_id} | PCNAME: {pc_name}".encode()
+                )
+                return client.recv(64).decode().strip() == "SUCCESS"
         except Exception as e:
             print(f"[ERROR notifying admin teacher online]: {e}")
+            return False
 
     def _notify_admin_teacher_offline(self, lab_id):
         try:
-            admin_ip = discover_admin_ip(timeout=3)
+            admin_ip = getattr(self, "admin_ip", None)
             if not admin_ip:
-                raise OSError("Admin server was not discovered on this LAN.")
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(3)
-            s.connect((admin_ip, 5001))
-            s.sendall(f"ACTION: TEACHER_OFFLINE | LABID: {lab_id}".encode())
-            s.close()
+                return
+            with socket.create_connection((admin_ip, 5001), timeout=3) as client:
+                client.sendall(f"ACTION: TEACHER_OFFLINE | LABID: {lab_id}".encode())
         except Exception as e:
             print(f"[ERROR notifying admin teacher offline]: {e}")
 
@@ -329,12 +336,15 @@ class LoginApp(ctk.CTk):
 
             user = db.verify_password(username, password)
             if user and user["role"] in ("teacher", "admin"):
-                payload = {
-                    "success": True,
-                    "id": user["id"],
-                    "role": user["role"],
-                    "full_name": user["full_name"] or user["username"],
-                }
+                if user["role"] == "teacher" and not self.is_admin_node:
+                    payload = {"success": False, "error": "ADMIN_OFFLINE"}
+                else:
+                    payload = {
+                        "success": True,
+                        "id": user["id"],
+                        "role": user["role"],
+                        "full_name": user["full_name"] or user["username"],
+                    }
             else:
                 payload = {"success": False}
             conn.send(json.dumps(payload).encode())
@@ -346,6 +356,10 @@ class LoginApp(ctk.CTk):
 
     def handle_login_check(self, conn, data, addr):
         try:
+            if not self.is_admin_node:
+                conn.send(b"ADMIN_OFFLINE")
+                return
+
             parts = data.split("|")
             username = ""
             password = ""
@@ -682,7 +696,7 @@ class LoginApp(ctk.CTk):
 
     def handle_get_teachers(self, conn):
         try:
-            teachers = db.get_all_teachers()
+            teachers = db.get_all_teachers() if self.is_admin_node else []
             online_by_teacher = {
                 entry["teacher_id"]: {
                     "ip_address": entry.get("ip_address"),
@@ -861,6 +875,7 @@ class LoginApp(ctk.CTk):
             return
 
         if result.get("success"):
+            self.admin_ip = admin_ip
             user = {"id": result["id"], "role": result["role"], "full_name": result["full_name"], "username": username}
             self.is_admin_node = user["role"] == "admin"
             self.withdraw()
@@ -868,10 +883,16 @@ class LoginApp(ctk.CTk):
 
             if role == "teacher":
                 def proceed_with_lab(lab_id):
+                    if not self._notify_admin_teacher_online(admin_ip, user["id"], lab_id):
+                        self.deiconify()
+                        self.error_label.configure(
+                            text="Hindi naitala ng Admin ang Teacher online. Tiyaking naka-login pa ang Admin.",
+                            text_color="red",
+                        )
+                        return
                     db.set_user_lab(user["id"], lab_id)
                     self.current_teacher_lab_id = lab_id
                     self.current_teacher_user_id = user["id"]
-                    self._notify_admin_teacher_online(user["id"], lab_id)
                     dashboard = TeacherDashboard(master_app=self)
                     self.active_teacher_dashboard = dashboard
                     dashboard.protocol("WM_DELETE_WINDOW", lambda: self.on_dashboard_close(dashboard))
@@ -884,7 +905,10 @@ class LoginApp(ctk.CTk):
                 self.active_teacher_dashboard = dashboard
                 dashboard.protocol("WM_DELETE_WINDOW", lambda: self.on_dashboard_close(dashboard))
         else:
-            self.error_label.configure(text="Invalid credentials!", text_color="red")
+            if result.get("error") == "ADMIN_OFFLINE":
+                self.error_label.configure(text="Mag-login muna sa Admin computer.", text_color="red")
+            else:
+                self.error_label.configure(text="Invalid credentials!", text_color="red")
 
     def on_dashboard_close(self, dashboard):
         if dashboard == self.active_teacher_dashboard:
@@ -897,6 +921,11 @@ class LoginApp(ctk.CTk):
                 stop_teacher_streaming()
             else:
                 self.is_admin_node = False
+                for entry in self.online_teachers.values():
+                    if entry.get("session_id"):
+                        db.end_session(entry["session_id"])
+                self.online_teachers.clear()
+                self.teacher_ips_by_lab.clear()
         dashboard.destroy()
         self.deiconify()
 

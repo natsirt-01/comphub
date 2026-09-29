@@ -38,7 +38,7 @@ def discover_admin_ip(timeout=4.0):
                     ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
                     capture_output=True,
                     text=True,
-                    timeout=2.0,
+                    timeout=5.0,
                     check=False,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )

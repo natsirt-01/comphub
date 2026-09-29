@@ -1019,6 +1019,8 @@ class LoginApp(ctk.CTk):
                 self.error_label.configure(text="Wala pang online na teacher. Maghintay.", text_color="red")
             elif response == "LAB_MISMATCH":
                 self.error_label.configure(text="Mali ang piniling teacher/lab.", text_color="red")
+            elif response == "ADMIN_OFFLINE":
+                self.error_label.configure(text="Mag-login muna sa Admin at Teacher.", text_color="red")
             else:
                 self.error_label.configure(text="Invalid credentials o hindi pa na-approve!", text_color="red")
         except Exception as e:
