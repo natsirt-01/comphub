@@ -9,10 +9,14 @@ from .date_filters import matches_date_range, parse_date_range
 
 
 def _fetch_alerts(master_dashboard):
-    teacher_id = getattr(master_dashboard.master_app, 'current_teacher_user_id', None)
+    master_app = master_dashboard.master_app
+    teacher_id = getattr(master_app, 'current_teacher_user_id', None)
     request = "ACTION: GET_ALERTS | ACTIVE: 1"
     if teacher_id:
         request += f" | TEACHERID: {teacher_id}"
+        lab_id = getattr(master_app, 'current_teacher_lab_id', None)
+        if lab_id is not None:
+            request += f" | LABID: {lab_id}"
     try:
         admin_ip = get_admin_ip()
         if not admin_ip:
@@ -23,6 +27,30 @@ def _fetch_alerts(master_dashboard):
         return json.loads(response) if response else []
     except (OSError, ValueError) as error:
         print(f"[ERROR fetching alerts from admin]: {error}")
+        return None
+
+
+def _fetch_activity(master_dashboard):
+    if getattr(master_dashboard, "is_admin_monitor", False):
+        from database import db
+        return db.get_activity_for_inbox()
+
+    master_app = master_dashboard.master_app
+    teacher_id = getattr(master_app, "current_teacher_user_id", None)
+    lab_id = getattr(master_app, "current_teacher_lab_id", None)
+    if not teacher_id or lab_id is None:
+        return []
+    admin_ip = get_admin_ip()
+    if not admin_ip:
+        return None
+    request = f"ACTION: GET_INBOX_ACTIVITY | TEACHERID: {teacher_id} | LABID: {lab_id}"
+    try:
+        with socket.create_connection((admin_ip, LOG_PORT), timeout=5) as client:
+            client.sendall(request.encode())
+            response = client.recv(65536).decode()
+        return json.loads(response) if response else []
+    except (OSError, ValueError) as error:
+        print(f"[ERROR fetching inbox activity]: {error}")
         return None
 
 
@@ -67,6 +95,7 @@ def open_inbox_window(master_dashboard):
     frame.pack(pady=10, padx=10, fill="both", expand=True)
 
     alerts = _fetch_alerts(master_dashboard) or []
+    activity_items = _fetch_activity(master_dashboard) or []
 
     def render_items():
         for widget in frame.winfo_children():
@@ -79,7 +108,17 @@ def open_inbox_window(master_dashboard):
 
         filtered_alerts = [a for a in alerts
                            if matches_date_range(a.get("timestamp"), start, end)]
-        logs = list(reversed(getattr(master_dashboard, "inbox_logs_data", [])))
+        logs = [
+            {
+                "time": item.get("timestamp", ""),
+                "message": (
+                    f"{item.get('full_name') or item.get('username', 'Student')}: "
+                    f"{item.get('activity_type', 'activity')} - {item.get('details', '')}"
+                ),
+            }
+            for item in activity_items
+        ]
+        logs.extend(reversed(getattr(master_dashboard, "inbox_logs_data", [])))
         filtered_logs = [log for log in logs
                          if matches_date_range(log.get("time"), start, end)]
 
@@ -119,13 +158,20 @@ def open_inbox_window(master_dashboard):
 
             def fetch_in_background():
                 refreshed = _fetch_alerts(master_dashboard)
+                refreshed_activity = _fetch_activity(master_dashboard)
 
                 def apply_refresh():
                     refresh_state["running"] = False
-                    if not inbox_win.winfo_exists() or refreshed is None:
+                    if not inbox_win.winfo_exists():
                         return
-                    if refreshed != alerts:
+                    changed = False
+                    if refreshed is not None and refreshed != alerts:
                         alerts[:] = refreshed
+                        changed = True
+                    if refreshed_activity is not None and refreshed_activity != activity_items:
+                        activity_items[:] = refreshed_activity
+                        changed = True
+                    if changed:
                         render_items()
 
                 try:

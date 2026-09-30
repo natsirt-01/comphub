@@ -23,6 +23,7 @@ import sys
 import hashlib
 import binascii
 import secrets
+import re
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -81,6 +82,22 @@ def init_db():
         columns = {row[1] for row in conn.execute("PRAGMA table_info(site_alerts)")}
         if "active" not in columns:
             conn.execute("ALTER TABLE site_alerts ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+        username_duplicates = conn.execute(
+            "SELECT 1 FROM users GROUP BY lower(username) HAVING COUNT(*) > 1 LIMIT 1"
+        ).fetchone()
+        if not username_duplicates:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_nocase ON users(username COLLATE NOCASE)"
+            )
+        email_duplicates = conn.execute(
+            """SELECT 1 FROM users WHERE email IS NOT NULL AND trim(email) <> ''
+               GROUP BY lower(email) HAVING COUNT(*) > 1 LIMIT 1"""
+        ).fetchone()
+        if not email_duplicates:
+            conn.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_nocase
+                   ON users(email COLLATE NOCASE) WHERE email IS NOT NULL AND trim(email) <> ''"""
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -162,28 +179,60 @@ def register_student(username, password, full_name, school_id, email,
                       contact_number, course_section, year_level, teacher_ids):
     """Create a pending student account and link it to the chosen teacher(s).
     Returns (True, user_id) on success or (False, error_message) on failure."""
+    username = str(username).strip()
+    email = str(email).strip().lower()
+    contact_number = str(contact_number).strip()
     required = [username, password, full_name, school_id, email, contact_number, course_section, year_level]
     if any(not str(v).strip() for v in required) or not teacher_ids:
         return False, "All fields and at least one teacher are required."
 
-    if get_user_by_username(username):
-        return False, "Username already taken."
+    if len(str(password)) < 8:
+        return False, "Password must be at least 8 characters."
+
+    email_local_part = email.partition("@")[0]
+    if (not re.fullmatch(r"[a-z0-9][a-z0-9.+-]*@gmail\.com", email)
+            or ".." in email_local_part or email_local_part.endswith(".")
+            or len(email_local_part) > 64):
+        return False, "Use a valid Gmail address ending in @gmail.com."
+
+    if not re.fullmatch(r"\+?[0-9\s().-]+", contact_number):
+        return False, "Contact number must contain only digits and phone separators."
+    contact_digits = re.sub(r"\D", "", contact_number)
+    if not 10 <= len(contact_digits) <= 15:
+        return False, "Contact number must contain 10 to 15 digits."
+    contact_number = ("+" if contact_number.startswith("+") else "") + contact_digits
 
     pw_hash, salt = _hash_password(password)
-    with get_conn() as conn:
-        cur = conn.execute(
-            """INSERT INTO users
-               (username, password_hash, password_salt, role, status,
-                full_name, school_id, email, contact_number, course_section, year_level)
-               VALUES (?, ?, ?, 'student', 'pending', ?, ?, ?, ?, ?, ?)""",
-            (username, pw_hash, salt, full_name, school_id, email, contact_number, course_section, year_level),
-        )
-        student_id = cur.lastrowid
-        for teacher_id in teacher_ids:
-            conn.execute(
-                "INSERT OR IGNORE INTO teacher_student (student_id, teacher_id) VALUES (?, ?)",
-                (student_id, teacher_id),
+    try:
+        with get_conn() as conn:
+            if conn.execute(
+                "SELECT 1 FROM users WHERE username=? COLLATE NOCASE", (username,)
+            ).fetchone():
+                return False, "Username already taken."
+            if conn.execute(
+                "SELECT 1 FROM users WHERE email=? COLLATE NOCASE", (email,)
+            ).fetchone():
+                return False, "Gmail address is already registered."
+            for teacher_id in teacher_ids:
+                if not conn.execute(
+                    "SELECT 1 FROM users WHERE id=? AND role='teacher'", (teacher_id,)
+                ).fetchone():
+                    return False, "Selected teacher is invalid."
+            cur = conn.execute(
+                """INSERT INTO users
+                   (username, password_hash, password_salt, role, status,
+                    full_name, school_id, email, contact_number, course_section, year_level)
+                   VALUES (?, ?, ?, 'student', 'pending', ?, ?, ?, ?, ?, ?)""",
+                (username, pw_hash, salt, full_name, school_id, email, contact_number, course_section, year_level),
             )
+            student_id = cur.lastrowid
+            for teacher_id in teacher_ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO teacher_student (student_id, teacher_id) VALUES (?, ?)",
+                    (student_id, teacher_id),
+                )
+    except sqlite3.IntegrityError:
+        return False, "Username or Gmail address is already registered."
     return True, student_id
 
 
@@ -460,6 +509,40 @@ def get_activity_for_user(user_id, limit=500):
         return [dict(r) for r in rows]
 
 
+def log_activity_for_active_user(username, source_ip, activity_type, details):
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT u.id AS user_id, s.id AS session_id FROM users u
+               JOIN sessions s ON s.user_id = u.id
+               WHERE u.username=? COLLATE NOCASE AND s.ip_address=? AND s.logout_time IS NULL
+               ORDER BY s.id DESC LIMIT 1""",
+            (username, source_ip),
+        ).fetchone()
+        if not row:
+            return False
+        conn.execute(
+            """INSERT INTO activity_logs (user_id, session_id, activity_type, details)
+               VALUES (?, ?, ?, ?)""",
+            (row["user_id"], row["session_id"], activity_type, details),
+        )
+        return True
+
+
+def get_activity_for_inbox(lab_id=None, limit=500):
+    with get_conn() as conn:
+        query = """SELECT al.*, u.username, COALESCE(u.full_name, u.username) AS full_name
+                   FROM activity_logs al
+                   JOIN users u ON u.id = al.user_id
+                   LEFT JOIN sessions s ON s.id = al.session_id"""
+        params = []
+        if lab_id is not None:
+            query += " WHERE s.lab_id=?"
+            params.append(lab_id)
+        query += " ORDER BY al.id DESC LIMIT ?"
+        params.append(limit)
+        return [dict(row) for row in conn.execute(query, params).fetchall()]
+
+
 # ---------------------------------------------------------------------------
 # Site blocklist / alerts ("Immediate Report" feature)
 # ---------------------------------------------------------------------------
@@ -528,15 +611,18 @@ def close_active_site_alert(user_id):
         conn.execute("UPDATE site_alerts SET active=0 WHERE user_id=? AND active=1", (user_id,))
 
 
-def get_alerts_for_teacher(teacher_id, unacknowledged_only=True, active_only=False):
+def get_alerts_for_teacher(teacher_id, unacknowledged_only=True, active_only=False, lab_id=None):
     """Alerts for students belonging to this teacher, newest first."""
     with get_conn() as conn:
         query = """SELECT sa.*, u.full_name, u.username, s.ip_address FROM site_alerts sa
                    JOIN users u ON u.id = sa.user_id
-                   JOIN teacher_student ts ON ts.student_id = u.id
-               LEFT JOIN sessions s ON s.id = sa.session_id
-                   WHERE ts.teacher_id = ?"""
-        params = [teacher_id]
+               LEFT JOIN sessions s ON s.id = sa.session_id"""
+        if lab_id is None:
+            query += " JOIN teacher_student ts ON ts.student_id = u.id WHERE ts.teacher_id = ?"
+            params = [teacher_id]
+        else:
+            query += " WHERE s.lab_id = ?"
+            params = [lab_id]
         if unacknowledged_only:
             query += " AND sa.acknowledged = 0"
         if active_only:

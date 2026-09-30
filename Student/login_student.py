@@ -3,6 +3,7 @@ import socket
 import threading
 import json
 import os
+import re
 import webbrowser
 import struct
 import cv2
@@ -17,7 +18,6 @@ from student_webcam_window import StudentWebcamOverlay
 import pygetwindow as gw
 from ui_utils import center_window, apply_theme, COLORS, maximize_window
 from network_config import LOG_PORT, LISTENER_PORT, BROADCAST_PORT, get_admin_ip
-USER_FILE = "users.json"
 apply_theme()
 
 class LockScreen(ctk.CTkToplevel):
@@ -278,22 +278,41 @@ class RegisterWindow(ctk.CTkToplevel):
             self.status_lbl.configure(text="Hindi magkatugma ang password.", text_color="orange")
             return
 
+        if len(pwd) < 8:
+            self.status_lbl.configure(text="Ang password ay dapat hindi bababa sa 8 character.", text_color="orange")
+            return
+
+        email = email.lower()
+        email_local_part = email.partition("@")[0]
+        if (not re.fullmatch(r"[a-z0-9][a-z0-9.+-]*@gmail\.com", email)
+            or ".." in email_local_part or email_local_part.endswith(".")
+            or len(email_local_part) > 64):
+            self.status_lbl.configure(text="Maglagay ng valid na Gmail address (@gmail.com).", text_color="orange")
+            return
+
+        if not re.fullmatch(r"\+?[0-9\s().-]+", contact) or not 10 <= len(re.sub(r"\D", "", contact)) <= 15:
+            self.status_lbl.configure(text="Maglagay ng valid na contact number na may 10 hanggang 15 digit.", text_color="orange")
+            return
+
         teacher_id = self.teacher_map.get(selected_teacher)
         if not teacher_id:
             self.status_lbl.configure(text="Pumili ng valid na teacher.", text_color="orange")
             return
 
         try:
-            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client.connect((self.teacher_ip, self.log_port))
-            msg = (
-                f"ACTION: REGISTER | USER: {user} | PWD: {pwd} | FULLNAME: {full_name} | "
-                f"SCHOOLID: {school_id} | EMAIL: {email} | CONTACT: {contact} | "
-                f"COURSE: {course} | YEAR: {year} | TEACHERID: {teacher_id}"
-            )
-            client.send(msg.encode())
-            client.close()
-            self.status_lbl.configure(text="Naipadala na! Maghintay ng approval.", text_color="green")
+            with socket.create_connection((self.teacher_ip, self.log_port), timeout=5) as client:
+                msg = (
+                    f"ACTION: REGISTER | USER: {user} | PWD: {pwd} | FULLNAME: {full_name} | "
+                    f"SCHOOLID: {school_id} | EMAIL: {email} | CONTACT: {contact} | "
+                    f"COURSE: {course} | YEAR: {year} | TEACHERID: {teacher_id}"
+                )
+                client.sendall(msg.encode())
+                response = client.recv(512).decode("utf-8", errors="replace").strip()
+            if response == "SUCCESS":
+                self.status_lbl.configure(text="Naipadala na! Maghintay ng approval.", text_color="green")
+            else:
+                message = response.removeprefix("FAILED:").strip() or "Hindi na-save ang registration."
+                self.status_lbl.configure(text=message, text_color="orange")
         except Exception as e:
             self.status_lbl.configure(text=f"Nabigo ang koneksyon: {e}", text_color="red")
 
@@ -567,7 +586,6 @@ class LoginApp(ctk.CTk):
         self.admin_ip = None
         self.teacher_ip = None
         self.window_tracker_started = False
-        self.load_users()
         self.blocklist_cache = []
         threading.Thread(target=self.refresh_blocklist_periodically, daemon=True).start()
         
@@ -604,8 +622,17 @@ class LoginApp(ctk.CTk):
 
         self.user_entry = ctk.CTkEntry(login_panel, placeholder_text="Username", height=40)
         self.user_entry.pack(pady=6, padx=34, fill="x")
-        self.pass_entry = ctk.CTkEntry(login_panel, placeholder_text="Password", show="*", height=40)
-        self.pass_entry.pack(pady=6, padx=34, fill="x")
+        password_row = ctk.CTkFrame(login_panel, fg_color="transparent")
+        password_row.pack(pady=6, padx=34, fill="x")
+        self.pass_entry = ctk.CTkEntry(password_row, placeholder_text="Password", show="*", height=40)
+        self.pass_entry.pack(side="left", fill="x", expand=True)
+        self.password_visible = False
+        self.password_toggle = ctk.CTkButton(
+            password_row, text="👁", width=42, height=40,
+            fg_color=COLORS["surface_alt"], text_color=COLORS["ink"],
+            hover_color=COLORS["surface"], command=self.toggle_password_visibility,
+        )
+        self.password_toggle.pack(side="left", padx=(6, 0))
 
         ctk.CTkButton(login_panel, text="Sign In", height=42, fg_color=COLORS["blue"],
               hover_color=COLORS["blue_hover"], command=self.check_login).pack(pady=(16, 8), padx=34, fill="x")
@@ -616,21 +643,13 @@ class LoginApp(ctk.CTk):
         ctk.CTkButton(login_panel, text="Create an Account", fg_color="transparent", text_color=COLORS["navy_panel"], 
               hover_color=COLORS["surface_alt"], command=self.open_registration).pack(pady=3)
 
-    def load_users(self):
-        if os.path.exists(USER_FILE):
-            with open(USER_FILE, "r") as f:
-                self.USERS = json.load(f)
-        else:
-            self.USERS = {"student": {"password": "student123", "role": "Student"}}
-            self.save_users()
+    def toggle_password_visibility(self):
+        self.password_visible = not self.password_visible
+        self.pass_entry.configure(show="" if self.password_visible else "*")
 
     def refresh_admin_ip(self):
         self.admin_ip = get_admin_ip(timeout=1.0)
         return self.admin_ip
-
-    def save_users(self):
-        with open(USER_FILE, "w") as f:
-            json.dump(self.USERS, f)
 
     def track_active_window(self):
         last_window = ""
@@ -681,7 +700,8 @@ class LoginApp(ctk.CTk):
                     if current_window != last_window:
                         last_window = current_window
 
-                        if not self.refresh_admin_ip():
+                        admin_ip = self.refresh_admin_ip()
+                        if not admin_ip:
                             time.sleep(1)
                             continue
 
@@ -690,14 +710,16 @@ class LoginApp(ctk.CTk):
                                 self.after(0, lambda t=current_window, c=entry["category"]: self.show_restricted_warning(t, c))
                                 break
 
-                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        if not self.teacher_ip:
-                            continue
-                        s.connect((self.teacher_ip, LOG_PORT))
-                        message = f"ACTIVITY: {socket.gethostname()} ({username_val}) - {current_window}"
-                        s.sendall(message.encode('utf-8'))
-                        s.close()
-                        print(f"[DEBUG STUDENT ACTIVITY] Matagumpay na na-send: {message}")
+                        activity = json.dumps({
+                            "username": username_val,
+                            "activity_type": "window_change",
+                            "details": current_window,
+                        })
+                        with socket.create_connection((admin_ip, LOG_PORT), timeout=3) as client:
+                            client.sendall(f"ACTION: LOG_ACTIVITY | DATA: {activity}".encode("utf-8"))
+                            response = client.recv(32).decode("utf-8", errors="ignore")
+                        if response != "SUCCESS":
+                            print(f"[DEBUG STUDENT ACTIVITY] Event was not saved: {current_window}")
                 elif last_restricted:
                     self.after(0, self.clear_restricted_warning)
                     self.notify_site_alert(username_val, last_restricted[0], last_restricted[1], "CLOSED")

@@ -99,3 +99,14 @@ def set_card_restricted(self, ip, restricted):
     card_info["info_label"].configure(
         text_color=COLORS["danger"] if restricted else COLORS["ink"]
     )
+    master_app = getattr(self, "master_app", None)
+    raw_image = getattr(master_app, "latest_raw_frames", {}).get(ip)
+    if raw_image is not None:
+        from PIL import Image, ImageTk
+        display_image = raw_image
+        if restricted:
+            overlay = Image.new("RGB", raw_image.size, (198, 40, 40))
+            display_image = Image.blend(raw_image.convert("RGB"), overlay, 0.42)
+        photo = ImageTk.PhotoImage(display_image)
+        card_info["preview"].configure(image=photo, text="")
+        card_info["preview"].image = photo

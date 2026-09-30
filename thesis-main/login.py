@@ -60,12 +60,6 @@ class LoginApp(ctk.CTk):
         self.configure(fg_color=COLORS["navy"])
         center_window(self, 760, 560)
         maximize_window(self)
-        self.USERS = {
-            "student": {"password": "student123", "role": "Student"},
-            "teacher": {"password": "teacher123", "role": "Teacher"},
-            "admin": {"password": "admin123", "role": "Admin"}
-        }
-        
         self.all_logs = [] 
         self.active_sessions = {} 
         self.authenticated_student_ips = {}
@@ -106,8 +100,17 @@ class LoginApp(ctk.CTk):
 
         self.user_entry = ctk.CTkEntry(login_panel, placeholder_text="Username", height=42)
         self.user_entry.pack(pady=7, padx=38, fill="x")
-        self.pass_entry = ctk.CTkEntry(login_panel, placeholder_text="Password", show="*", height=42)
-        self.pass_entry.pack(pady=7, padx=38, fill="x")
+        password_row = ctk.CTkFrame(login_panel, fg_color="transparent")
+        password_row.pack(pady=7, padx=38, fill="x")
+        self.pass_entry = ctk.CTkEntry(password_row, placeholder_text="Password", show="*", height=42)
+        self.pass_entry.pack(side="left", fill="x", expand=True)
+        self.password_visible = False
+        self.password_toggle = ctk.CTkButton(
+            password_row, text="👁", width=42, height=42,
+            fg_color=COLORS["surface_alt"], text_color=COLORS["ink"],
+            hover_color=COLORS["surface"], command=self.toggle_password_visibility,
+        )
+        self.password_toggle.pack(side="left", padx=(6, 0))
         self.btn_login = ctk.CTkButton(login_panel, text="Sign In", height=42, fg_color=COLORS["blue"],
                            hover_color=COLORS["blue_hover"], command=self.check_login)
         self.btn_login.pack(pady=(18, 8), padx=38, fill="x")
@@ -116,6 +119,10 @@ class LoginApp(ctk.CTk):
             justify="center",
         )
         self.error_label.pack(pady=(0, 4))
+
+    def toggle_password_visibility(self):
+        self.password_visible = not self.password_visible
+        self.pass_entry.configure(show="" if self.password_visible else "*")
 
     def start_log_listener(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -149,7 +156,7 @@ class LoginApp(ctk.CTk):
                 elif "ACTION: UPDATE_PROFILE" in data:
                     self.handle_update_profile(conn, data)
                 elif "ACTION: REGISTER" in data:
-                    self.process_register(data)
+                    conn.sendall(self.process_register(data).encode("utf-8"))
                     conn.close()
                 elif "ACTION: LOGIN" in data:
                     self.handle_student_login_event(data, addr)
@@ -182,6 +189,10 @@ class LoginApp(ctk.CTk):
                     self.handle_get_blocklist(conn)
                 elif "ACTION: GET_ALERTS" in data:
                     self.handle_get_alerts(conn, data)
+                elif "ACTION: GET_INBOX_ACTIVITY" in data:
+                    self.handle_get_inbox_activity(conn, data)
+                elif "ACTION: LOG_ACTIVITY" in data:
+                    self.handle_log_activity(conn, data, addr[0])
                 elif "ACTION: ACK_ALERT" in data:
                     self.handle_ack_alert(conn, data)
                 elif "ACTION: SITE_ALERT" in data:
@@ -191,23 +202,17 @@ class LoginApp(ctk.CTk):
                 elif "EXPRESSION:" in data:
                     expr_content = data.replace("EXPRESSION:", "").strip()
                     print(f"[STUDENT EXPRESSION] mula {addr[0]}: {expr_content}")
+
+                    expression_parts = expr_content.split("|", 1)
+                    student_label = expression_parts[0].strip()
+                    expression = expression_parts[1].strip() if len(expression_parts) > 1 else expr_content
+                    username = student_label.rsplit(" - ", 1)[-1].strip()
+                    self._record_or_forward_activity(username, "expression", expression, addr[0])
                     
                     if self.active_teacher_dashboard:
-                        if not hasattr(self.active_teacher_dashboard, 'inbox_logs_data'):
-                            self.active_teacher_dashboard.inbox_logs_data = []
-                            
-                        new_log = {
-                            "time": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                            "message": f"[{addr[0]}] Expression: {expr_content}"
-                        }
-                        self.active_teacher_dashboard.inbox_logs_data.append(new_log)
-                        
-                        # I-refresh ang UI ng Inbox at Student Card nang sabay
                         dashboard = self.active_teacher_dashboard
-                        if hasattr(dashboard, "refresh_inbox_ui"):
-                            dashboard.after(0, dashboard.refresh_inbox_ui)
                         self.active_teacher_dashboard.after(
-                            0, lambda e=expr_content, ip=addr[0]: handle_student_expression(self.active_teacher_dashboard, e, ip)
+                            0, lambda e=expr_content, ip=addr[0], app=self: handle_student_expression(app, e, ip)
                         )
                     conn.close()
                 else:
@@ -417,29 +422,109 @@ class LoginApp(ctk.CTk):
     def handle_get_alerts(self, conn, data):
         try:
             teacher_id = None
+            lab_id = None
             active_only = "ACTIVE: 1" in data
             unacknowledged_only = "UNACKED: 0" not in data
             for part in data.split("|"):
                 if "TEACHERID:" in part:
                     value = part.split("TEACHERID:", 1)[1].strip()
                     teacher_id = int(value) if value.isdigit() else None
-            alerts = (
-                db.get_alerts_for_teacher(
+                elif "LABID:" in part:
+                    value = part.split("LABID:", 1)[1].strip()
+                    lab_id = int(value) if value.isdigit() else None
+            if teacher_id and lab_id is not None:
+                online_teacher = self.online_teachers.get(lab_id)
+                if not online_teacher or online_teacher.get("teacher_id") != teacher_id:
+                    alerts = []
+                else:
+                    alerts = db.get_alerts_for_teacher(
+                        teacher_id,
+                        unacknowledged_only=unacknowledged_only,
+                        active_only=active_only,
+                        lab_id=lab_id,
+                    )
+            elif teacher_id:
+                alerts = db.get_alerts_for_teacher(
                     teacher_id,
                     unacknowledged_only=unacknowledged_only,
                     active_only=active_only,
                 )
-                if teacher_id else db.get_alerts_for_admin(
+            else:
+                alerts = db.get_alerts_for_admin(
                     unacknowledged_only=unacknowledged_only,
                     active_only=active_only,
                 )
-            )
             conn.send(json.dumps(alerts).encode())
         except Exception as e:
             print(f"[ERROR sa get_alerts]: {e}")
             conn.send(json.dumps([]).encode())
         finally:
             conn.close()
+
+    def handle_get_inbox_activity(self, conn, data):
+        try:
+            teacher_id = lab_id = None
+            for part in data.split("|"):
+                if "TEACHERID:" in part:
+                    value = part.split("TEACHERID:", 1)[1].strip()
+                    teacher_id = int(value) if value.isdigit() else None
+                elif "LABID:" in part:
+                    value = part.split("LABID:", 1)[1].strip()
+                    lab_id = int(value) if value.isdigit() else None
+            if teacher_id and lab_id is not None:
+                online_teacher = self.online_teachers.get(lab_id)
+                rows = (db.get_activity_for_inbox(lab_id)
+                        if online_teacher and online_teacher.get("teacher_id") == teacher_id else [])
+            elif self.is_admin_node:
+                rows = db.get_activity_for_inbox()
+            else:
+                rows = []
+            conn.sendall(json.dumps(rows).encode("utf-8"))
+        except Exception as error:
+            print(f"[ERROR fetching inbox activity]: {error}")
+            conn.sendall(b"[]")
+        finally:
+            conn.close()
+
+    def handle_log_activity(self, conn, data, sender_ip):
+        try:
+            payload_text = data.partition("DATA:")[2].strip()
+            payload = json.loads(payload_text)
+            username = str(payload.get("username", "")).strip()
+            activity_type = str(payload.get("activity_type", "")).strip()
+            details = str(payload.get("details", "")).strip()
+            source_ip = sender_ip
+            relayed_ip = str(payload.get("source_ip", "")).strip()
+            if (self.is_admin_node and relayed_ip
+                    and any(item.get("ip_address") == sender_ip for item in self.online_teachers.values())):
+                source_ip = relayed_ip
+            saved = db.log_activity_for_active_user(username, source_ip, activity_type, details)
+            conn.sendall(b"SUCCESS" if saved else b"FAILED")
+        except Exception as error:
+            print(f"[ERROR saving inbox activity]: {error}")
+            conn.sendall(b"FAILED")
+        finally:
+            conn.close()
+
+    def _record_or_forward_activity(self, username, activity_type, details, source_ip):
+        if self.is_admin_node:
+            return db.log_activity_for_active_user(username, source_ip, activity_type, details)
+        admin_ip = getattr(self, "admin_ip", None)
+        if not admin_ip:
+            return False
+        payload = json.dumps({
+            "username": username,
+            "activity_type": activity_type,
+            "details": details,
+            "source_ip": source_ip,
+        })
+        try:
+            with socket.create_connection((admin_ip, 5001), timeout=3) as client:
+                client.sendall(f"ACTION: LOG_ACTIVITY | DATA: {payload}".encode("utf-8"))
+                return client.recv(32).decode("utf-8") == "SUCCESS"
+        except OSError as error:
+            print(f"[DEBUG activity forward] Cannot reach Admin: {error}")
+            return False
 
     def handle_ack_alert(self, conn, data):
         try:
@@ -794,10 +879,13 @@ class LoginApp(ctk.CTk):
             )
             if ok:
                 print(f"[SUCCESS] Na-save sa database, naghihintay ng approval! (user id {result})")
+                return "SUCCESS"
             else:
                 print(f"[FAILED] Registration error: {result}")
+                return f"FAILED: {result}"
         except Exception as e:
             print(f"[ERROR sa pag-save ng registration]: {e}")
+            return "FAILED: Registration could not be saved."
 
     def process_log(self, data):
         try:

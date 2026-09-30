@@ -200,14 +200,18 @@ def update_thumbnail_frame(self, ip, image, source_conn=None):
     if source_conn is not None and self.connected_students.get(ip) is not source_conn:
         return
     dashboard = getattr(self, "active_teacher_dashboard", None)
+    raw_image = image.copy()
     if dashboard is not None:
         image = _tint_restricted_frame(dashboard, ip, image)
     img_tk = ImageTk.PhotoImage(image)
     if not hasattr(self, "latest_frames"):
         self.latest_frames = {}
+    if not hasattr(self, "latest_raw_frames"):
+        self.latest_raw_frames = {}
     if not hasattr(self, "stream_frame_seen"):
         self.stream_frame_seen = set()
     self.latest_frames[ip] = img_tk
+    self.latest_raw_frames[ip] = raw_image
     if ip not in self.stream_frame_seen:
         self.stream_frame_seen.add(ip)
         print(f"[monitor stream] First frame received from {ip}")
@@ -234,8 +238,11 @@ def start_alert_monitoring(self, dashboard):
                     raise OSError("Admin server was not discovered on this LAN.")
                 request = "ACTION: GET_ALERTS | ACTIVE: 1 | UNACKED: 0"
                 teacher_id = getattr(self, "current_teacher_user_id", None)
+                lab_id = getattr(self, "current_teacher_lab_id", None)
                 if teacher_id:
                     request += f" | TEACHERID: {teacher_id}"
+                if lab_id is not None:
+                    request += f" | LABID: {lab_id}"
                 with _socket.create_connection((admin_ip, LOG_PORT), timeout=2) as sock:
                     sock.sendall(request.encode())
                     alerts = _json.loads(sock.recv(65536).decode() or "[]")
@@ -409,7 +416,7 @@ def start_persistent_stream_listeners(self):
                                 relay_conn.close()
                             relay_conn = None
                             relay_retry_at = now + 2.0
-                    if relay_conn and now - last_relayed_at >= 0.08:
+                    if relay_conn and now - last_relayed_at >= 0.05:
                         try:
                             relay_buffer = io.BytesIO()
                             image.save(relay_buffer, format="JPEG", quality=65, optimize=True)
@@ -435,6 +442,7 @@ def start_persistent_stream_listeners(self):
                 del self.connected_students[student_ip]
                 self.handshake_roles.pop(student_ip, None)
                 self.latest_frames.pop(student_ip, None)
+                getattr(self, "latest_raw_frames", {}).pop(student_ip, None)
                 self.stream_frame_seen.discard(student_ip)
 
             def remove_card_ui():
