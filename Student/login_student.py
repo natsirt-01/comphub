@@ -20,6 +20,19 @@ from ui_utils import center_window, apply_theme, COLORS, maximize_window
 from network_config import LOG_PORT, LISTENER_PORT, BROADCAST_PORT, get_admin_ip
 apply_theme()
 
+
+def _get_window_title(hwnd):
+    if not hasattr(ctypes, "windll") or not hwnd:
+        return ""
+    user32 = ctypes.windll.user32
+    if not user32.IsWindow(hwnd):
+        return ""
+    length = user32.GetWindowTextLengthW(hwnd)
+    title = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, title, length + 1)
+    return title.value.strip()
+
+
 class LockScreen(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
@@ -271,15 +284,15 @@ class RegisterWindow(ctk.CTkToplevel):
 
         required = [user, pwd, repwd, full_name, school_id, email, contact, course, year]
         if not all(required):
-            self.status_lbl.configure(text="Punan ang lahat ng kahon.", text_color="orange")
+            self.status_lbl.configure(text="Complete all fields.", text_color="orange")
             return
 
         if pwd != repwd:
-            self.status_lbl.configure(text="Hindi magkatugma ang password.", text_color="orange")
+            self.status_lbl.configure(text="Passwords do not match.", text_color="orange")
             return
 
         if len(pwd) < 8:
-            self.status_lbl.configure(text="Ang password ay dapat hindi bababa sa 8 character.", text_color="orange")
+            self.status_lbl.configure(text="Password must be at least 8 characters.", text_color="orange")
             return
 
         email = email.lower()
@@ -287,16 +300,16 @@ class RegisterWindow(ctk.CTkToplevel):
         if (not re.fullmatch(r"[a-z0-9][a-z0-9.+-]*@gmail\.com", email)
             or ".." in email_local_part or email_local_part.endswith(".")
             or len(email_local_part) > 64):
-            self.status_lbl.configure(text="Maglagay ng valid na Gmail address (@gmail.com).", text_color="orange")
+            self.status_lbl.configure(text="Enter a valid Gmail address ending in @gmail.com.", text_color="orange")
             return
 
         if not re.fullmatch(r"\+?[0-9\s().-]+", contact) or not 10 <= len(re.sub(r"\D", "", contact)) <= 15:
-            self.status_lbl.configure(text="Maglagay ng valid na contact number na may 10 hanggang 15 digit.", text_color="orange")
+            self.status_lbl.configure(text="Enter a valid contact number with 10 to 15 digits.", text_color="orange")
             return
 
         teacher_id = self.teacher_map.get(selected_teacher)
         if not teacher_id:
-            self.status_lbl.configure(text="Pumili ng valid na teacher.", text_color="orange")
+            self.status_lbl.configure(text="Select a valid teacher.", text_color="orange")
             return
 
         try:
@@ -309,12 +322,12 @@ class RegisterWindow(ctk.CTkToplevel):
                 client.sendall(msg.encode())
                 response = client.recv(512).decode("utf-8", errors="replace").strip()
             if response == "SUCCESS":
-                self.status_lbl.configure(text="Naipadala na! Maghintay ng approval.", text_color="green")
+                self.status_lbl.configure(text="Registration submitted. Please wait for approval.", text_color="green")
             else:
-                message = response.removeprefix("FAILED:").strip() or "Hindi na-save ang registration."
+                message = response.removeprefix("FAILED:").strip() or "Registration could not be saved."
                 self.status_lbl.configure(text=message, text_color="orange")
         except Exception as e:
-            self.status_lbl.configure(text=f"Nabigo ang koneksyon: {e}", text_color="red")
+            self.status_lbl.configure(text=f"Connection failed: {e}", text_color="red")
 
 
 class LabSelectionDialog(ctk.CTkToplevel):
@@ -446,10 +459,10 @@ class StudentDashboard(ctk.CTkToplevel):
         re_pwd = self.re_p.get().strip()
 
         if not old_pwd or not new_pwd or not re_pwd:
-            self.msg.configure(text="Punan ang lahat ng kahon.", text_color="orange")
+            self.msg.configure(text="Complete all fields.", text_color="orange")
             return
         if new_pwd != re_pwd:
-            self.msg.configure(text="Hindi magkatugma ang bagong password.", text_color="red")
+            self.msg.configure(text="New passwords do not match.", text_color="red")
             return
 
         try:
@@ -655,14 +668,28 @@ class LoginApp(ctk.CTk):
         last_window = ""
         last_restricted = None
         last_username = ""
+        restricted_hwnd = None
+        pending_site_alerts = []
+
+        def queue_site_alert(username, text, category, status):
+            alert = (username, text, category, status)
+            if pending_site_alerts:
+                pending_site_alerts.append(alert)
+            elif not self.notify_site_alert(*alert):
+                pending_site_alerts.append(alert)
+
         while True:
             try:
+                if pending_site_alerts and self.notify_site_alert(*pending_site_alerts[0]):
+                    pending_site_alerts.pop(0)
+
                 session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "active_session.json")
                 if not os.path.exists(session_path):
                     self.after(0, self.clear_restricted_warning)
                     if last_restricted and last_username:
-                        self.notify_site_alert(last_username, last_restricted[0], last_restricted[1], "CLOSED")
+                        queue_site_alert(last_username, last_restricted[0], last_restricted[1], "CLOSED")
                     last_restricted = None
+                    restricted_hwnd = None
                     last_window = ""
                     time.sleep(3)
                     continue
@@ -674,11 +701,17 @@ class LoginApp(ctk.CTk):
                     username_val = "Student"
                 last_username = username_val
 
-                active_win = gw.getActiveWindow()
-                current_window = active_win.title.strip() if active_win and active_win.title else ""
-                warning = getattr(self, "restricted_warning", None)
-                if warning and warning.winfo_exists() and current_window == warning.title():
-                    current_window = last_restricted[0] if last_restricted else last_window
+                user32 = ctypes.windll.user32 if hasattr(ctypes, "windll") else None
+                current_hwnd = user32.GetForegroundWindow() if user32 else None
+                current_window = _get_window_title(current_hwnd)
+                if not current_window:
+                    active_win = gw.getActiveWindow()
+                    current_window = active_win.title.strip() if active_win and active_win.title else ""
+                if restricted_hwnd:
+                    tracked_title = _get_window_title(restricted_hwnd)
+                    if tracked_title:
+                        current_hwnd = restricted_hwnd
+                        current_window = tracked_title
 
                 if current_window:
                     restricted_entry = next(
@@ -689,13 +722,14 @@ class LoginApp(ctk.CTk):
                     if restricted_entry:
                         self.after(0, lambda t=current_window, c=restricted_entry["category"]: self.show_restricted_warning(t, c))
                         if last_restricted != (current_window, restricted_entry["category"]):
-                            self.notify_site_alert(username_val, current_window, restricted_entry["category"], "OPEN")
+                            queue_site_alert(username_val, current_window, restricted_entry["category"], "OPEN")
                         last_restricted = (current_window, restricted_entry["category"])
-                    elif hasattr(self, "restricted_warning") and self.restricted_warning:
+                        restricted_hwnd = current_hwnd
+                    elif last_restricted:
                         self.after(0, self.clear_restricted_warning)
-                        if last_restricted:
-                            self.notify_site_alert(username_val, last_restricted[0], last_restricted[1], "CLOSED")
+                        queue_site_alert(username_val, last_restricted[0], last_restricted[1], "CLOSED")
                         last_restricted = None
+                        restricted_hwnd = None
 
                     if current_window != last_window:
                         last_window = current_window
@@ -722,8 +756,9 @@ class LoginApp(ctk.CTk):
                             print(f"[DEBUG STUDENT ACTIVITY] Event was not saved: {current_window}")
                 elif last_restricted:
                     self.after(0, self.clear_restricted_warning)
-                    self.notify_site_alert(username_val, last_restricted[0], last_restricted[1], "CLOSED")
+                    queue_site_alert(username_val, last_restricted[0], last_restricted[1], "CLOSED")
                     last_restricted = None
+                    restricted_hwnd = None
                     last_window = ""
             except Exception as e:
                 print(f"[DEBUG STUDENT ACTIVITY ERROR]: {e}")
@@ -803,7 +838,7 @@ class LoginApp(ctk.CTk):
     def open_registration(self):
         admin_ip = self.refresh_admin_ip()
         if not admin_ip:
-            self.error_label.configure(text="Hindi makita ang Admin sa local network.", text_color=COLORS["danger"])
+            self.error_label.configure(text="Admin server not found on the local network.", text_color=COLORS["danger"])
             return
         RegisterWindow(self, admin_ip, LOG_PORT)
     def show_restricted_warning(self, window_text, category):
@@ -923,12 +958,12 @@ class LoginApp(ctk.CTk):
 
     def show_teacher_message(self, message):
         msg_win = ctk.CTkToplevel(self)
-        msg_win.title("Mensahe mula sa Guro")
+        msg_win.title("Message from Teacher")
         center_window(msg_win, 400, 200)
         msg_win.attributes("-topmost", True)
         msg_win.grab_set()
         
-        ctk.CTkLabel(msg_win, text="ANUNSYO MULA SA GURO", font=("Arial", 14, "bold"), text_color="#1f6aa5").pack(pady=15)
+        ctk.CTkLabel(msg_win, text="TEACHER ANNOUNCEMENT", font=("Arial", 14, "bold"), text_color="#1f6aa5").pack(pady=15)
         
         txt_box = ctk.CTkTextbox(msg_win, width=350, height=80)
         txt_box.insert("1.0", message)
@@ -947,7 +982,7 @@ class LoginApp(ctk.CTk):
         if not self.admin_ip:
             self.teacher_dropdown.configure(values=["Admin not found on this LAN"])
             self.lab_dropdown.configure(values=["Admin not found on this LAN"])
-            self.error_label.configure(text="Hindi makita ang Admin app. Tiyaking bukas ito at nasa parehong local network ang computers.", text_color=COLORS["danger"])
+            self.error_label.configure(text="Cannot find the Admin app. Make sure it is running on the same local network.", text_color=COLORS["danger"])
             self.after(5000, self.fetch_teachers_and_labs)
             return
         try:
@@ -998,11 +1033,11 @@ class LoginApp(ctk.CTk):
         pwd = self.pass_entry.get().strip()
 
         if not user or not pwd:
-            self.error_label.configure(text="Punan ang lahat ng kahon.", text_color="orange")
+            self.error_label.configure(text="Complete all fields.", text_color="orange")
             return
 
         if not self.refresh_admin_ip():
-            self.error_label.configure(text="Hindi makita ang Admin sa local network.", text_color=COLORS["danger"])
+            self.error_label.configure(text="Admin server not found on the local network.", text_color=COLORS["danger"])
             return
 
         selected_teacher_name = self.teacher_dropdown.get()
@@ -1012,7 +1047,7 @@ class LoginApp(ctk.CTk):
         lab_id = self.lab_map.get(selected_lab_name)
 
         if not teacher_id or not lab_id or not teacher_ip:
-            self.error_label.configure(text="Pumili ng online na teacher at lab sa network na ito.", text_color="orange")
+            self.error_label.configure(text="Select an online teacher and a lab on this network.", text_color="orange")
             return
 
         try:
@@ -1048,15 +1083,15 @@ class LoginApp(ctk.CTk):
                 StudentDashboard(username=user, master_app=self)
 
             elif response == "TEACHER_OFFLINE":
-                self.error_label.configure(text="Wala pang online na teacher. Maghintay.", text_color="red")
+                self.error_label.configure(text="No teacher is online yet. Please wait.", text_color="red")
             elif response == "LAB_MISMATCH":
-                self.error_label.configure(text="Mali ang piniling teacher/lab.", text_color="red")
+                self.error_label.configure(text="The selected teacher or lab is invalid.", text_color="red")
             elif response == "ADMIN_OFFLINE":
-                self.error_label.configure(text="Mag-login muna sa Admin at Teacher.", text_color="red")
+                self.error_label.configure(text="The Admin and Teacher must sign in first.", text_color="red")
             else:
-                self.error_label.configure(text="Invalid credentials o hindi pa na-approve!", text_color="red")
+                self.error_label.configure(text="Invalid credentials or account not yet approved.", text_color="red")
         except Exception as e:
-            self.error_label.configure(text=f"Hindi makakonekta sa Guro: {e}", text_color="red")
+            self.error_label.configure(text=f"Could not connect to the Teacher: {e}", text_color="red")
         
     def notify_teacher(self, action, username):
         try:
@@ -1076,14 +1111,15 @@ class LoginApp(ctk.CTk):
         try:
             admin_ip = self.refresh_admin_ip()
             if not admin_ip:
-                return
+                return False
             with socket.create_connection((admin_ip, LOG_PORT), timeout=3) as client:
                 client.sendall(
                     f"ACTION: SITE_ALERT | USER: {username} | TEXT: {text} | "
                     f"CATEGORY: {category} | STATUS: {status}".encode()
                 )
+                return client.recv(32).decode("utf-8", errors="ignore") == "SUCCESS"
         except OSError:
-            pass
+            return False
 
 if __name__ == "__main__":
     app = LoginApp()

@@ -130,7 +130,7 @@ class LoginApp(ctk.CTk):
         server.bind(("0.0.0.0", 5001))
         server.listen(5)
         print("==========================================")
-        print("[DEBUG] Log & Command listener ay BUKAS sa port 5001")
+        print("[DEBUG] Log and command listener is running on port 5001")
         print("==========================================")
         while True:
             try:
@@ -196,7 +196,7 @@ class LoginApp(ctk.CTk):
                 elif "ACTION: ACK_ALERT" in data:
                     self.handle_ack_alert(conn, data)
                 elif "ACTION: SITE_ALERT" in data:
-                    self.handle_site_alert(data)
+                    conn.sendall(b"SUCCESS" if self.handle_site_alert(data) else b"FAILED")
                     conn.close()
 
                 elif "EXPRESSION:" in data:
@@ -560,18 +560,24 @@ class LoginApp(ctk.CTk):
 
             user = db.get_user_by_username(username)
             if not user:
-                return
+                return False
             if status == "CLOSED":
                 db.close_active_site_alert(user["id"])
-                return
+                return True
+            if status != "OPEN":
+                return False
             session_id = db.get_active_session_id(user["id"])
+            if not session_id:
+                return False
             db.log_site_alert(user["id"], session_id, text, category, active=True)
 
             dashboard = self.active_teacher_dashboard
             if dashboard and hasattr(dashboard, 'refresh_inbox_ui'):
                 self.after(0, dashboard.refresh_inbox_ui)
+            return True
         except Exception as e:
             print(f"[ERROR sa site_alert]: {e}")
+            return False
 
     def handle_change_password(self, conn, data):
         try:
@@ -878,7 +884,7 @@ class LoginApp(ctk.CTk):
                 teacher_ids=teacher_ids,
             )
             if ok:
-                print(f"[SUCCESS] Na-save sa database, naghihintay ng approval! (user id {result})")
+                print(f"[SUCCESS] Registration saved and awaiting approval (user id {result})")
                 return "SUCCESS"
             else:
                 print(f"[FAILED] Registration error: {result}")
@@ -960,7 +966,7 @@ class LoginApp(ctk.CTk):
             if not admin_ip and username.strip().lower() == "admin":
                 admin_ip = "127.0.0.1"
             if not admin_ip:
-                raise OSError("Hindi makita ang Admin app. Tiyaking bukas ito at nasa parehong local network ang computers.")
+                raise OSError("Cannot find the Admin app. Make sure it is running on the same local network.")
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(5)
             s.connect((admin_ip, 5001))
@@ -984,7 +990,7 @@ class LoginApp(ctk.CTk):
                     if not self._notify_admin_teacher_online(admin_ip, user["id"], lab_id):
                         self.deiconify()
                         self.error_label.configure(
-                            text="Hindi naitala ng Admin ang Teacher online. Tiyaking naka-login pa ang Admin.",
+                            text="The Admin could not register this Teacher as online. Make sure the Admin is still signed in.",
                             text_color="red",
                         )
                         return
@@ -1004,7 +1010,7 @@ class LoginApp(ctk.CTk):
                 dashboard.protocol("WM_DELETE_WINDOW", lambda: self.on_dashboard_close(dashboard))
         else:
             if result.get("error") == "ADMIN_OFFLINE":
-                self.error_label.configure(text="Mag-login muna sa Admin computer.", text_color="red")
+                self.error_label.configure(text="Sign in on the Admin computer first.", text_color="red")
             else:
                 self.error_label.configure(text="Invalid credentials!", text_color="red")
 

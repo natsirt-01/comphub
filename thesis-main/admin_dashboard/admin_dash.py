@@ -308,7 +308,7 @@ class AdminDashboard(ctk.CTkToplevel):
         full_name = self.new_teacher_name.get().strip()
 
         if not username or not password or not full_name:
-            self.teacher_create_status.configure(text="Punan ang lahat ng kahon.", text_color="orange")
+            self.teacher_create_status.configure(text="Complete all fields.", text_color="orange")
             return
 
         if db.get_user_by_username(username):

@@ -68,7 +68,7 @@ class ClientApp(ctk.CTk):
     # Simulan ang background listener para sa mga utos ng Teacher
     threading.Thread(target=self.start_listener, daemon=True).start()
 
-    # Simulan ang active window tracker para sa Teacher's Inbox (Tiyaking may ACTIVITY: prefix)
+    # Start the active-window tracker for the Teacher Inbox (requires the ACTIVITY: prefix).
     threading.Thread(target=self.track_active_window, daemon=True).start()
 
   def track_active_window(self):
@@ -118,14 +118,14 @@ class ClientApp(ctk.CTk):
 
   def show_teacher_message(self, message):
     msg_win = ctk.CTkToplevel(self)
-    msg_win.title("Mensahe mula sa Guro")
+    msg_win.title("Message from Teacher")
     msg_win.geometry("400x200")
     msg_win.attributes("-topmost", True)
     msg_win.grab_set()
 
     ctk.CTkLabel(
         msg_win,
-        text="📢 ANUNSYO MULA SA GURO",
+        text="📢 TEACHER ANNOUNCEMENT",
         font=("Arial", 14, "bold"),
         text_color="#1f6aa5",
     ).pack(pady=15)

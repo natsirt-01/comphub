@@ -161,7 +161,7 @@ class ClientListener:
             print("[CLIENT] PC Unlocked")
         elif command.startswith("MSG:"):
             msg_content = command.split(":", 1)[1]
-            print(f"[CLIENT] Mensahe mula kay Teacher: {msg_content}")
+            print(f"[CLIENT] Message from Teacher: {msg_content}")
         elif command.startswith("URL:"):
             url_content = command.split(":", 1)[1]
             import webbrowser

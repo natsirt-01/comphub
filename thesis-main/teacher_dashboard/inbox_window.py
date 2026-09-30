@@ -123,12 +123,12 @@ def open_inbox_window(master_dashboard):
                          if matches_date_range(log.get("time"), start, end)]
 
         if filtered_alerts:
-            ctk.CTkLabel(frame, text="RESTRICTED SITE ALERTS", font=("Arial", 13, "bold"), text_color=COLORS["danger"]).pack(anchor="w", pady=(5, 5))
+            ctk.CTkLabel(frame, text="RESTRICTED SITE ALERTS", font=("Arial", 13, "bold"), text_color="#c62828").pack(anchor="w", pady=(5, 5))
             for a in filtered_alerts:
                 display_name = a["full_name"] or a["username"]
                 text = f"[{a['timestamp']}] {display_name}: {a['matched_text']} ({a['category']})"
                 lbl = ctk.CTkLabel(frame, text=text, anchor="w", justify="left", font=("Arial", 12, "bold"),
-                                    text_color="white", fg_color=COLORS["danger"], corner_radius=6, wraplength=520)
+                                    text_color="white", fg_color="#c62828", corner_radius=6, wraplength=520)
                 lbl.pack(fill="x", padx=5, pady=3, ipady=6)
 
         if filtered_logs:

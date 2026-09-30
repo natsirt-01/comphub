@@ -608,7 +608,11 @@ def log_site_alert(user_id, session_id, matched_text, category, active=True):
 
 def close_active_site_alert(user_id):
     with get_conn() as conn:
-        conn.execute("UPDATE site_alerts SET active=0 WHERE user_id=? AND active=1", (user_id,))
+        cursor = conn.execute(
+            "UPDATE site_alerts SET active=0 WHERE user_id=? AND active=1",
+            (user_id,),
+        )
+        return cursor.rowcount
 
 
 def get_alerts_for_teacher(teacher_id, unacknowledged_only=True, active_only=False, lab_id=None):

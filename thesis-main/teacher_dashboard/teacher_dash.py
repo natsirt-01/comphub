@@ -306,7 +306,7 @@ class TeacherDashboard(ctk.CTkToplevel):
         dialog.title("Send Text Message to Students")
         center_window(dialog, 400, 250)
         dialog.attributes("-topmost", True)
-        ctk.CTkLabel(dialog, text="I-type ang mensahe para sa lahat ng estudyante:", font=("Arial", 12, "bold")).pack(pady=15)
+        ctk.CTkLabel(dialog, text="Enter a message for all students:", font=("Arial", 12, "bold")).pack(pady=15)
         msg_entry = ctk.CTkTextbox(dialog, width=350, height=100)
         msg_entry.pack(pady=5)
         
@@ -324,7 +324,7 @@ class TeacherDashboard(ctk.CTkToplevel):
         dialog.title(f"Send Message to {ip}")
         center_window(dialog, 400, 250)
         dialog.attributes("-topmost", True)
-        ctk.CTkLabel(dialog, text=f"I-type ang mensahe para sa PC ({ip}):", font=("Arial", 12, "bold")).pack(pady=15)
+        ctk.CTkLabel(dialog, text=f"Enter a message for PC ({ip}):", font=("Arial", 12, "bold")).pack(pady=15)
         msg_entry = ctk.CTkTextbox(dialog, width=350, height=100)
         msg_entry.pack(pady=5)
         
@@ -341,7 +341,7 @@ class TeacherDashboard(ctk.CTkToplevel):
         dialog.title("Open Website on All Students")
         center_window(dialog, 400, 200)
         dialog.attributes("-topmost", True)
-        ctk.CTkLabel(dialog, text="I-type ang URL (hal. https://www.facebook.com):", font=("Arial", 12, "bold")).pack(pady=15)
+        ctk.CTkLabel(dialog, text="Enter a URL (e.g. https://www.facebook.com):", font=("Arial", 12, "bold")).pack(pady=15)
         url_entry = ctk.CTkEntry(dialog, width=350, placeholder_text="https://...")
         url_entry.pack(pady=5)
         
@@ -359,7 +359,7 @@ class TeacherDashboard(ctk.CTkToplevel):
         dialog.title(f"Open Website on {ip}")
         center_window(dialog, 400, 200)
         dialog.attributes("-topmost", True)
-        ctk.CTkLabel(dialog, text=f"I-type ang URL para sa PC ({ip}):", font=("Arial", 12, "bold")).pack(pady=15)
+        ctk.CTkLabel(dialog, text=f"Enter a URL for PC ({ip}):", font=("Arial", 12, "bold")).pack(pady=15)
         url_entry = ctk.CTkEntry(dialog, width=350, placeholder_text="https://...")
         url_entry.pack(pady=5)
         

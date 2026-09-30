@@ -6,7 +6,7 @@ def open_text_message_dialog(master):
     dialog.title("Send Text Message to Students")
     center_window(dialog, 400, 250)
     dialog.attributes("-topmost", True)
-    ctk.CTkLabel(dialog, text="I-type ang mensahe para sa lahat ng estudyante:", font=("Arial", 12, "bold")).pack(pady=15)
+    ctk.CTkLabel(dialog, text="Enter a message for all students:", font=("Arial", 12, "bold")).pack(pady=15)
     msg_entry = ctk.CTkTextbox(dialog, width=350, height=100)
     msg_entry.pack(pady=5)
 
@@ -24,7 +24,7 @@ def open_single_text_message_dialog(master, ip):
     dialog.title(f"Send Message to {ip}")
     dialog.geometry("400x250")
     dialog.attributes("-topmost", True)
-    ctk.CTkLabel(dialog, text=f"I-type ang mensahe para sa PC ({ip}):", font=("Arial", 12, "bold")).pack(pady=15)
+    ctk.CTkLabel(dialog, text=f"Enter a message for PC ({ip}):", font=("Arial", 12, "bold")).pack(pady=15)
     msg_entry = ctk.CTkTextbox(dialog, width=350, height=100)
     msg_entry.pack(pady=5)
 
@@ -41,7 +41,7 @@ def open_website_dialog(master):
     dialog.title("Open Website on All Students")
     dialog.geometry("400x200")
     dialog.attributes("-topmost", True)
-    ctk.CTkLabel(dialog, text="I-type ang URL (hal. https://www.facebook.com):", font=("Arial", 12, "bold")).pack(pady=15)
+    ctk.CTkLabel(dialog, text="Enter a URL (e.g. https://www.facebook.com):", font=("Arial", 12, "bold")).pack(pady=15)
     url_entry = ctk.CTkEntry(dialog, width=350, placeholder_text="https://...")
     url_entry.pack(pady=5)
 
@@ -59,7 +59,7 @@ def open_single_website_dialog(master, ip):
     dialog.title(f"Open Website on {ip}")
     dialog.geometry("400x200")
     dialog.attributes("-topmost", True)
-    ctk.CTkLabel(dialog, text=f"I-type ang URL para sa PC ({ip}):", font=("Arial", 12, "bold")).pack(pady=15)
+    ctk.CTkLabel(dialog, text=f"Enter a URL for PC ({ip}):", font=("Arial", 12, "bold")).pack(pady=15)
     url_entry = ctk.CTkEntry(dialog, width=350, placeholder_text="https://...")
     url_entry.pack(pady=5)
 
