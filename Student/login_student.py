@@ -12,13 +12,71 @@ import ctypes
 from datetime import datetime
 import numpy as np
 import tkinter as tk
+from ctypes import wintypes
 from PIL import Image, ImageTk
 import screen_sender
 from student_webcam_window import StudentWebcamOverlay
 import pygetwindow as gw
-from ui_utils import center_window, apply_theme, COLORS, maximize_window
+from ui_utils import center_window, apply_theme, COLORS
 from network_config import LOG_PORT, LISTENER_PORT, BROADCAST_PORT, get_admin_ip
 apply_theme()
+
+_keyboard_hook = None
+_keyboard_hook_callback = None
+
+
+def _make_fullscreen(window):
+    window.overrideredirect(True)
+    window.attributes("-fullscreen", True)
+
+
+def _make_borderless(window):
+    window.overrideredirect(True)
+
+
+def _install_alt_tab_blocker():
+    global _keyboard_hook, _keyboard_hook_callback
+    if not hasattr(ctypes, "windll"):
+        return
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    class KeyboardEvent(ctypes.Structure):
+        _fields_ = [
+            ("vk_code", wintypes.DWORD),
+            ("scan_code", wintypes.DWORD),
+            ("flags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("extra_info", ctypes.c_size_t),
+        ]
+
+    hook_proc_type = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, ctypes.c_size_t, ctypes.c_ssize_t)
+    user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, ctypes.c_size_t, ctypes.c_ssize_t]
+    user32.CallNextHookEx.restype = ctypes.c_ssize_t
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    user32.SetWindowsHookExW.argtypes = [ctypes.c_int, hook_proc_type, wintypes.HINSTANCE, wintypes.DWORD]
+    user32.SetWindowsHookExW.restype = wintypes.HHOOK
+    kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+    kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+
+    def keyboard_hook(code, message, event_pointer):
+        if code >= 0 and message in (0x0100, 0x0104):
+            event = ctypes.cast(event_pointer, ctypes.POINTER(KeyboardEvent)).contents
+            if event.vk_code == 0x09 and user32.GetAsyncKeyState(0x12) & 0x8000:
+                foreground = user32.GetForegroundWindow()
+                process_id = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(foreground, ctypes.byref(process_id))
+                if process_id.value == os.getpid():
+                    return 1
+        return user32.CallNextHookEx(_keyboard_hook, code, message, event_pointer)
+
+    _keyboard_hook_callback = hook_proc_type(keyboard_hook)
+    module = kernel32.GetModuleHandleW(None)
+    _keyboard_hook = user32.SetWindowsHookExW(13, _keyboard_hook_callback, module, 0)
 
 
 def _get_window_title(hwnd):
@@ -36,7 +94,7 @@ def _get_window_title(hwnd):
 class LockScreen(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
-        self.attributes("-fullscreen", True)
+        _make_fullscreen(self)
         self.attributes("-topmost", True)
         self.title("Terminal Locked")
         ctk.CTkLabel(self, text="TERMINAL LOCKED", font=("Arial", 60, "bold"), text_color="red").pack(expand=True)
@@ -205,6 +263,7 @@ class RegisterWindow(ctk.CTkToplevel):
         self.log_port = log_port
         self.title("Student Registration")
         center_window(self, 400, 680)
+        _make_borderless(self)
         self.transient(master)
         self.attributes("-topmost", True)
         self.protocol("WM_DELETE_WINDOW", self.close_window)
@@ -339,6 +398,7 @@ class LabSelectionDialog(ctk.CTkToplevel):
         self.on_selected = on_selected
         self.title("Select Computer Lab")
         self.geometry("350x220")
+        _make_borderless(self)
         self.attributes("-topmost", True)
         self.grab_set()
         self.protocol("WM_DELETE_WINDOW", lambda: None)  # must pick a lab, can't just close this
@@ -402,8 +462,7 @@ class StudentDashboard(ctk.CTkToplevel):
         self.title(f"Student Portal - {self.username}")
         self.configure(fg_color=COLORS["surface"])
         self.protocol("WM_DELETE_WINDOW", self.logout)
-        center_window(self, 900, 620)
-        maximize_window(self)
+        _make_fullscreen(self)
         
         tabview = ctk.CTkTabview(self)
         tabview.pack(expand=True, fill="both", padx=20, pady=20)
@@ -588,9 +647,9 @@ class LoginApp(ctk.CTk):
         super().__init__()
         self.title("Student Login")
         self.configure(fg_color=COLORS["navy"])
-        center_window(self, 760, 600)
-        maximize_window(self)
+        _make_fullscreen(self)
         self.protocol("WM_DELETE_WINDOW", lambda: None) 
+        _install_alt_tab_blocker()
         
         self.active_lock = None
         self.demo_window = None

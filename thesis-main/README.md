@@ -15,7 +15,9 @@ CompHub is a Windows lab-monitoring system with Admin/Teacher and Student applic
 
 ## Install Wizard
 
-End users run `installer-output/CompHub-Setup.exe`, select **Server**, **Student**, or both, and enter the Teacher and Admin server IPv4 addresses. The installer places the selected role under `Program Files\CompHub`, creates Start Menu shortcuts, and writes role-specific network configuration beside each executable. Server data is kept under `%ProgramData%\CompHub\scholarnet.db` so upgrades do not replace the database.
+End users run `installer-output/COMPHUB-Setup.exe` as Administrator, choose an installation directory, then select **Admin / Main Server**, **Teacher Client**, or **Student Client**. Admin and Teacher use the shared Server application; the signed-in account determines its access role. Student uses the separate Student Client. The installer creates branded Start Menu and Desktop shortcuts, and adds the Student Client to the all-users Windows Startup folder for Student installations. Server data is kept under `%ProgramData%\CompHub\scholarnet.db` so upgrades do not replace the database.
+
+The build packages Python and its requirements into standalone executables with PyInstaller, so end-user installation does not need to install Python or run pip. Clients discover the Admin automatically on the same reachable Wi-Fi/LAN; no server IP entry is required. Student startup launches the regular client application at Windows sign-in; the client does not currently have a separate hidden/background mode.
 
 ### Build the Installer
 
@@ -23,8 +25,8 @@ On a Windows build machine:
 
 1. Install Python 3.11 and the project dependencies from `requirements.txt` in the repository root environment.
 2. Install PyInstaller (`python -m pip install pyinstaller`) and Inno Setup 6.
-3. From `thesis-main`, run `./build_installer.ps1` in PowerShell.
-4. Test the generated setup on a clean Windows machine for both server and student-only installation types before distribution.
+3. Keep the supplied `comphub_logo.ico` image in the workspace root, then from `thesis-main` run `./build_installer.ps1` in PowerShell. The build converts it to the Windows icon and wizard bitmap formats.
+4. Test each role on a clean Windows machine before distribution, including Student startup and same-LAN discovery.
 
 The Student executable bundles OpenCV, DeepFace, and TensorFlow, so packaging and installation can be large and may require additional PyInstaller hooks on some Python environments.
 

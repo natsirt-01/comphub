@@ -21,4 +21,19 @@ active_students.json
 
 # OS junk
 Thumbs.db
+.DS_Store# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# PyInstaller
+build/
+dist/
+
+# Installer output
+installer-output/
+
+# Temporary files
+*.log
 .DS_Store

@@ -1,0 +1,14 @@
+
+# Python virtual environments
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+
+# Generated installer files
+installer-output/
+
+
+thesis-main/installer-outputOutputBaseFilename=CompHub-Setup/
+
