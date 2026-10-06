@@ -462,7 +462,7 @@ class StudentDashboard(ctk.CTkToplevel):
         self.title(f"Student Portal - {self.username}")
         self.configure(fg_color=COLORS["surface"])
         self.protocol("WM_DELETE_WINDOW", self.logout)
-        _make_fullscreen(self)
+        center_window(self, 1100, 760)
         
         tabview = ctk.CTkTabview(self)
         tabview.pack(expand=True, fill="both", padx=20, pady=20)
@@ -647,9 +647,7 @@ class LoginApp(ctk.CTk):
         super().__init__()
         self.title("Student Login")
         self.configure(fg_color=COLORS["navy"])
-        _make_fullscreen(self)
-        self.protocol("WM_DELETE_WINDOW", lambda: None) 
-        _install_alt_tab_blocker()
+        center_window(self, 700, 740)
         
         self.active_lock = None
         self.demo_window = None
