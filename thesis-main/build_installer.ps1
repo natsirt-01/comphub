@@ -18,15 +18,15 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller is required. Run: python -m pip in
 python -m PyInstaller --noconfirm --clean --onedir --windowed `
   --name CompHub-Server --distpath $distPath --workpath (Join-Path $workPath "server") `
   --specpath $workPath --collect-all customtkinter `
-  --add-data "$(Join-Path $projectRoot 'database\schema.sql');database" `
-  --add-data "$(Join-Path $projectRoot 'network_config.json');." $serverEntry
+  --add-data "C:\Users\Admin\Music\watata-main\thesis-main\database\schema.sql;database" `
+  --add-data "C:\Users\Admin\Music\watata-main\thesis-main\network_config.json;." $serverEntry
 if ($LASTEXITCODE -ne 0) { throw "Server packaging failed." }
 
 python -m PyInstaller --noconfirm --clean --onedir --windowed `
   --name CompHub-Student --distpath $distPath --workpath (Join-Path $workPath "student") `
   --specpath $workPath --collect-all customtkinter --collect-all cv2 `
   --collect-all deepface --collect-all tensorflow `
-  --add-data "$(Join-Path $workspaceRoot 'Student\network_config.json');." $studentEntry
+  --add-data "C:\Users\Admin\Music\watata-main\Student\network_config.json;." $studentEntry
 if ($LASTEXITCODE -ne 0) { throw "Student packaging failed." }
 
 $compilerPath = "C:\Users\Admin\AppData\Local\Programs\Inno Setup 6\ISCC.exe"

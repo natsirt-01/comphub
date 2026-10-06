@@ -1,5 +1,5 @@
-
 #define ProjectDir "C:\Users\Admin\Music\watata-main\thesis-main"
+#define WorkspaceDir "C:\Users\Admin\Music\watata-main"
 #define AppName "CompHub"
 #define AppVersion "1.0.0"
 
@@ -10,74 +10,103 @@ AppVersion={#AppVersion}
 AppPublisher=CompHub
 DefaultDirName={autopf}\CompHub
 DefaultGroupName=CompHub
-OutputDir={#ProjectDir}\..\installer-output
+OutputDir={#ProjectDir}\installer-output
 OutputBaseFilename=CompHub-Setup
+SetupIconFile={#WorkspaceDir}\comphub_logo.ico
+UninstallDisplayIcon={app}\Server\CompHub-Server\CompHub-Server.exe
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayIcon={app}\Server\CompHub-Server\CompHub-Server.exe
+DisableProgramGroupPage=yes
 CloseApplications=yes
 RestartApplications=no
-
-[Types]
-Name: "full"; Description: "Admin + Teacher Server and Student Client"
-Name: "server"; Description: "Admin + Teacher Server only"
-Name: "student"; Description: "Student Client only"
-
-[Components]
-Name: "server"; Description: "Admin + Teacher Server (login app)"; Types: full server
-Name: "student"; Description: "Student Client"; Types: full student
-
-[Tasks]
-Name: "desktopicon"; Description: "Create desktop shortcuts"; GroupDescription: "Additional shortcuts:"; Flags: checkedonce
 
 [Dirs]
 Name: "{commonappdata}\CompHub"; Permissions: users-modify
 
 [Files]
-; ==========================================
-; ADMIN / TEACHER SERVER
-; ==========================================
+; ==========================================================
+; ADMIN / TEACHER - shared server application
+; ==========================================================
+Source: "{#ProjectDir}\dist\CompHub-Server\CompHub-Server.exe"; DestDir: "{app}\Server\CompHub-Server"; Flags: ignoreversion; Check: IsServerRole
+Source: "{#ProjectDir}\dist\CompHub-Server\_internal\*"; DestDir: "{app}\Server\CompHub-Server\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: IsServerRole
+Source: "{#ProjectDir}\network_config.json"; DestDir: "{app}\Server\CompHub-Server"; Flags: ignoreversion; Check: IsServerRole
 
-Source: "{#ProjectDir}\dist\CompHub-Server\CompHub-Server.exe"; DestDir: "{app}\Server\CompHub-Server"; Flags: ignoreversion; Components: server
-
-Source: "{#ProjectDir}\dist\CompHub-Server\_internal\*"; DestDir: "{app}\Server\CompHub-Server\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: server
-
-; SERVER CONFIGURATION
-Source: "{#ProjectDir}\network_config.json"; DestDir: "{app}\Server\CompHub-Server"; Flags: ignoreversion; Components: server
-
-; ==========================================
+; ==========================================================
 ; STUDENT CLIENT
-; ==========================================
-
-Source: "{#ProjectDir}\dist\CompHub-Student\CompHub-Student.exe"; DestDir: "{app}\Student\CompHub-Student"; Flags: ignoreversion; Components: student
-
-Source: "{#ProjectDir}\dist\CompHub-Student\_internal\*"; DestDir: "{app}\Student\CompHub-Student\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: student
-
-; STUDENT CONFIGURATION - PERMANENT FIX
-Source: "{#ProjectDir}\..\Student\network_config.json"; DestDir: "{app}\Student\CompHub-Student"; Flags: ignoreversion; Components: student
+; ==========================================================
+Source: "{#ProjectDir}\dist\CompHub-Student\CompHub-Student.exe"; DestDir: "{app}\Student\CompHub-Student"; Flags: ignoreversion; Check: IsStudentRole
+Source: "{#ProjectDir}\dist\CompHub-Student\_internal\*"; DestDir: "{app}\Student\CompHub-Student\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: IsStudentRole
+Source: "{#WorkspaceDir}\Student\network_config.json"; DestDir: "{app}\Student\CompHub-Student"; Flags: ignoreversion; Check: IsStudentRole
 
 [Icons]
-Name: "{autoprograms}\CompHub\CompHub Admin-Teacher"; Filename: "{app}\Server\CompHub-Server\CompHub-Server.exe"; WorkingDir: "{app}\Server\CompHub-Server"; Components: server
+; Admin / Teacher share the same application. The signed-in account determines the role.
+Name: "{autoprograms}\CompHub\CompHub Admin-Teacher"; Filename: "{app}\Server\CompHub-Server\CompHub-Server.exe"; WorkingDir: "{app}\Server\CompHub-Server"; Check: IsServerRole
+Name: "{autodesktop}\CompHub Admin-Teacher"; Filename: "{app}\Server\CompHub-Server\CompHub-Server.exe"; WorkingDir: "{app}\Server\CompHub-Server"; Check: IsServerRole
 
-Name: "{autoprograms}\CompHub\CompHub Student"; Filename: "{app}\Student\CompHub-Student\CompHub-Student.exe"; WorkingDir: "{app}\Student\CompHub-Student"; Components: student
-
-Name: "{autodesktop}\CompHub Admin-Teacher"; Filename: "{app}\Server\CompHub-Server\CompHub-Server.exe"; WorkingDir: "{app}\Server\CompHub-Server"; Tasks: desktopicon; Components: server
-
-Name: "{autodesktop}\CompHub Student"; Filename: "{app}\Student\CompHub-Student\CompHub-Student.exe"; WorkingDir: "{app}\Student\CompHub-Student"; Tasks: desktopicon; Components: student
+Name: "{autoprograms}\CompHub\CompHub Student"; Filename: "{app}\Student\CompHub-Student\CompHub-Student.exe"; WorkingDir: "{app}\Student\CompHub-Student"; Check: IsStudentRole
+Name: "{autodesktop}\CompHub Student"; Filename: "{app}\Student\CompHub-Student\CompHub-Student.exe"; WorkingDir: "{app}\Student\CompHub-Student"; Check: IsStudentRole
+Name: "{commonstartup}\CompHub Student"; Filename: "{app}\Student\CompHub-Student\CompHub-Student.exe"; WorkingDir: "{app}\Student\CompHub-Student"; Check: IsStudentRole
 
 [Run]
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""CompHub LAN discovery"" dir=in action=allow protocol=UDP localport=37020 remoteip=localsubnet profile=private,public"; Flags: runhidden; Components: server
+; Server firewall: LAN discovery + application ports.
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""CompHub LAN discovery"" dir=in action=allow protocol=UDP localport=37020 remoteip=localsubnet profile=private,public"; Flags: runhidden; Check: IsServerRole
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""CompHub LAN application"" dir=in action=allow protocol=TCP localport=5001,5050,9996-9999 remoteip=localsubnet profile=private,public"; Flags: runhidden; Check: IsServerRole
 
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""CompHub LAN application"" dir=in action=allow protocol=TCP localport=5001,5050,9996-9999 remoteip=localsubnet profile=private,public"; Flags: runhidden; Components: server
+; Student firewall: ports used for Teacher/Admin connections to the Student client.
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""CompHub Student LAN application"" dir=in action=allow protocol=TCP localport=5050,9996-9999 remoteip=localsubnet profile=private,public"; Flags: runhidden; Check: IsStudentRole
 
-Filename: "{app}\Server\CompHub-Server\CompHub-Server.exe"; Description: "Launch CompHub Admin/Teacher"; Flags: postinstall nowait skipifsilent unchecked; Components: server
-
-Filename: "{app}\Student\CompHub-Student\CompHub-Student.exe"; Description: "Launch CompHub Student"; Flags: postinstall nowait skipifsilent unchecked; Components: student
+Filename: "{app}\Server\CompHub-Server\CompHub-Server.exe"; Description: "Launch CompHub Admin/Teacher"; Flags: postinstall nowait skipifsilent unchecked; Check: IsServerRole
+Filename: "{app}\Student\CompHub-Student\CompHub-Student.exe"; Description: "Launch CompHub Student"; Flags: postinstall nowait skipifsilent unchecked; Check: IsStudentRole
 
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""CompHub LAN discovery"""; Flags: runhidden; RunOnceId: "RemoveCompHubDiscoveryFirewallRule"
-
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""CompHub LAN application"""; Flags: runhidden; RunOnceId: "RemoveCompHubApplicationFirewallRule"
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""CompHub Student LAN application"""; Flags: runhidden; RunOnceId: "RemoveCompHubStudentFirewallRule"
+
+[Code]
+var
+  RolePage: TInputOptionWizardPage;
+
+function IsServerRole: Boolean;
+begin
+  Result := (RolePage <> nil) and (RolePage.SelectedValueIndex in [0, 1]);
+end;
+
+function IsStudentRole: Boolean;
+begin
+  Result := (RolePage <> nil) and (RolePage.SelectedValueIndex = 2);
+end;
+
+procedure InitializeWizard;
+begin
+  RolePage := CreateInputOptionPage(
+    wpWelcome,
+    'Choose Installation Role',
+    'Where will CompHub be installed?',
+    'Select the role for this computer. Admin and Teacher use the same server application; the signed-in account determines the access role.',
+    True,
+    True
+  );
+  RolePage.Add('Admin / Main Server');
+  RolePage.Add('Teacher Client');
+  RolePage.Add('Student Client');
+  RolePage.SelectedValueIndex := 0;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+
+  if CurPageID = RolePage.ID then
+  begin
+    if RolePage.SelectedValueIndex < 0 then
+    begin
+      MsgBox('Please select an installation role before continuing.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end;
+end;
